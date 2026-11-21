@@ -4,8 +4,8 @@ The standard Gradle package is `vp.net.voltplus`, with the launcher label `volt 
 Java classes retain their original namespace; this is not the installed application ID.
 The existing dev workflow still builds its separate `dev.horizon.android.dev` package.
 
-The Volt Plus APK workflow builds ARM64 on pushes to the dedicated Arena branch and
-uploads a ZIP artifact containing the APK, checksum and build metadata. Artifacts
+The Volt Plus APK workflow builds ARM64 on pushes to the dedicated Arena branch
+and to `android` after this workflow is merged. It uploads a ZIP artifact containing the APK, checksum and build metadata. Artifacts
 expire after 14 days and require GitHub sign-in. The workflow never falls back to a
 development key: it requires Actions secrets `ANDROID_KEYSTORE_BASE64`,
 `ANDROID_KEYSTORE_PASSWORD` and `ANDROID_KEY_ALIAS`. Set `ANDROID_KEY_PASSWORD` too
