@@ -110,7 +110,13 @@ pub struct Config {
     pub max_fps_unlocked_v3: bool,
     #[serde(default)]
     pub theme: horizon_client::ui_theme::LauncherThemeConfig,
+    #[serde(default = "default_scene_gyro")]
+    pub scene_gyro_sensitivity: u32,
+    #[serde(default)]
+    pub volt_fullscreen_default_v1: bool,
 }
+
+fn default_scene_gyro() -> u32 { 150 }
 
 fn default_true() -> bool {
     true
@@ -151,6 +157,8 @@ impl Default for Config {
             max_fps_unlocked_v2: true,
             max_fps_unlocked_v3: true,
             theme: horizon_client::ui_theme::LauncherThemeConfig::default(),
+            scene_gyro_sensitivity: default_scene_gyro(),
+            volt_fullscreen_default_v1: true,
         }
     }
 }
@@ -205,6 +213,13 @@ impl Config {
         if cfg!(target_pointer_width = "32") && value.get("renderer").is_none() {
             config.renderer = RendererMode::VulkanCompatibility;
         }
+        // One-time migration for existing installs; later user changes are preserved.
+        let migrate_fullscreen = value.get("volt_fullscreen_default_v1").and_then(|v| v.as_bool()) != Some(true);
+        if migrate_fullscreen {
+            config.screen.immersive = true;
+            config.volt_fullscreen_default_v1 = true;
+        }
+        config.scene_gyro_sensitivity = config.scene_gyro_sensitivity.min(300);
         // Ignore saved app registrations while this dev build uses the fixed ID.
         config.microsoft_client_id =
             crate::account::client_id().unwrap_or_else(|| MICROSOFT_CLIENT_ID.into());
@@ -233,6 +248,7 @@ impl Config {
         config.name = truncate_player_name(&config.name);
         config.mod_source = crate::shader_catalog::Origin::Horizon;
         config.theme.sanitize();
+        if migrate_fullscreen { let _ = config.save(home); }
         horizon_client::ui_theme::set_active_theme(config.theme.resolve());
         horizon_client::ui_theme::motion::set_reduced_motion(
             config.disable_launcher_animations

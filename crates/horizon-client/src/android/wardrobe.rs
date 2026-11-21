@@ -37,6 +37,7 @@ pub(super) struct Wardrobe {
     pub view: [f32; 3],
     worker: Option<mpsc::Receiver<(String, Result<(cloud::Cache, bool), String>)>>,
     bitmap: Vec<([f32; 4], u32)>,
+    head_bitmap: Vec<([f32; 4], u32)>,
     rect: [f32; 4],
     fingers: std::collections::BTreeMap<u64, [f32; 2]>,
     note: String,
@@ -68,6 +69,7 @@ impl Wardrobe {
             cache: Default::default(),
             worker: None,
             bitmap: vec![],
+            head_bitmap: vec![],
             rect: [0.0; 4],
             view: [0.0; 3],
             fingers: Default::default(),
@@ -381,7 +383,7 @@ impl Wardrobe {
                 let bytes = skins::read_file(&self.default_skin).ok()?;
                 skins::read_skin(&bytes).ok()
             })
-            .unwrap_or_else(preview::mannequin);
+            .unwrap_or_else(preview::default_steve);
         // A real selection owns the head; with none, keep the cached cloud
         // head until the cloud fetch answers, rather than flashing Steve.
         if let Some(image) = &chosen {
@@ -406,6 +408,18 @@ impl Wardrobe {
                 .and_then(|b| skins::read_cape(&b).ok())
         };
         let model = selection.model;
+        let head = preview::render_head(&skin, 48);
+        self.head_bitmap.clear();
+        for y in 0..head.height() {
+            let mut x = 0;
+            while x < head.width() {
+                let [r, g, b, a] = head.get_pixel(x, y).0;
+                let start = x;
+                x += 1;
+                while x < head.width() && head.get_pixel(x, y).0 == [r, g, b, a] { x += 1; }
+                if a > 0 { self.head_bitmap.push(([start as f32, y as f32, (x - start) as f32, 1.0], rgba(r, g, b, a))); }
+            }
+        }
         let image = preview::render(&skin, cape.as_ref(), model, self.camera, [160, 200]);
         self.bitmap.clear();
         for y in 0..image.height() {
@@ -451,6 +465,14 @@ impl Wardrobe {
                 self.camera.pitch = -8.0;
             }
             self.preview();
+        }
+    }
+
+    /// The account head and full-body preview use the identical selected skin.
+    pub fn draw_head(&self, ui: &mut Ui, x: f32, y: f32, size: f32) {
+        let scale = size / 48.0;
+        for ([bx, by, bw, bh], color) in &self.head_bitmap {
+            ui.rounded(x + bx * scale, y + by * scale, bw * scale, bh * scale, 0.0, *color);
         }
     }
 

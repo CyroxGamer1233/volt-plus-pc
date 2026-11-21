@@ -197,9 +197,8 @@ pub struct ScreenPreferences {
 impl Default for ScreenPreferences {
     fn default() -> Self {
         Self {
-            // Toggling immersive system-bar hiding has freeze reports on some
-            // devices; keep navigation bars visible until that is understood.
-            immersive: false,
+            // Android can reveal system bars temporarily with an edge swipe.
+            immersive: true,
             avoid_cutout: false,
             aspect: Aspect::Native,
         }
@@ -209,9 +208,9 @@ impl Default for ScreenPreferences {
 mod screen_tests {
     use super::*;
     #[test]
-    fn missing_screen_preferences_keep_navigation_bars_visible() {
+    fn missing_screen_preferences_default_to_immersive() {
         let defaults: ScreenPreferences = serde_json::from_str("{}").unwrap();
-        assert!(!defaults.immersive);
+        assert!(defaults.immersive);
         let saved: ScreenPreferences =
             serde_json::from_str(r#"{"immersive":false,"aspect":"classic","avoid_cutout":true}"#)
                 .unwrap();

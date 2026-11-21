@@ -269,6 +269,7 @@ impl AnimState {
 #[derive(Clone, Copy, PartialEq)]
 pub(super) enum Action {
     Page(Page),
+    SceneGyro(i8),
     SettingsCat(SettingsCategory),
     Play,
     PauseInstall,
@@ -1293,9 +1294,10 @@ impl Launcher {
         // Leave room for the navigation dock in all page layouts and scroll calculations.
         let h = (full_h - 54.0).max(210.0);
         ui.h = h;
-        let motion_ok = !horizon_client::ui_theme::motion::reduced_motion()
+        let sensitivity = self.catalog.config.scene_gyro_sensitivity.min(300) as f32 / 100.0;
+        let motion_ok = sensitivity > 0.0 && !horizon_client::ui_theme::motion::reduced_motion()
             && self.focused && self.control_editor.is_none();
-        let delta = crate::device_runtime::gyro(motion_ok, 1.5, crate::platform::display_rotation());
+        let delta = crate::device_runtime::gyro(motion_ok, sensitivity.max(0.1), crate::platform::display_rotation());
         for (offset, change) in self.anim.scene_offset.iter_mut().zip(delta) {
             *offset = (*offset + change * 0.018).clamp(-1.0, 1.0);
             if !motion_ok { *offset = 0.0; }
@@ -1328,7 +1330,7 @@ impl Launcher {
         let account_rect = [12.0, 54.0, 100.0, 36.0];
         ui.rounded(account_rect[0], account_rect[1], account_rect[2], account_rect[3], 18.0, my3_surface());
         ui.border(account_rect[0], account_rect[1], account_rect[2], account_rect[3], 18.0, my3_border());
-        ui.avatar_head_2d(19.0, 59.0, 26.0, &account_name);
+        self.wardrobe.draw_head(&mut ui, 18.0, 57.0, 30.0);
         let label = ui.fit_text(Face::Medium, 11.0, &account_name, 45.0);
         ui.text(Face::Medium, 11.0, 49.0, 63.0, my3_text(), &label);
         self.targets.push((account_rect, Action::Account));
@@ -1526,6 +1528,17 @@ impl Launcher {
                     &format!("Profile {}", self.catalog.config.profile + 1), Action::Profile, false);
                 button(&mut ui, &mut self.targets, [12.0, h - 44.0, 232.0, 32.0],
                     &format!("Renderer: {}", self.catalog.config.renderer.label()), Action::Renderer, false);
+                // A compact control within the open lower-right portion of the home scene.
+                let gyro_w = 218.0_f32.min((w * 0.26).max(150.0));
+                let gx = w - gyro_w - 12.0;
+                let gy = h - 44.0;
+                ui.rounded(gx, gy, gyro_w, 32.0, 10.0, my3_surface());
+                ui.border(gx, gy, gyro_w, 32.0, 10.0, my3_border());
+                button(&mut ui, &mut self.targets, [gx + 4.0, gy + 3.0, 30.0, 26.0], "−", Action::SceneGyro(-1), false);
+                button(&mut ui, &mut self.targets, [gx + gyro_w - 34.0, gy + 3.0, 30.0, 26.0], "+", Action::SceneGyro(1), false);
+                let value = if self.catalog.config.scene_gyro_sensitivity == 0 { "Off".to_owned() }
+                    else { format!("{}%", self.catalog.config.scene_gyro_sensitivity) };
+                ui.centered_fit(Face::Medium, 11.0, [gx + 35.0, gy, gyro_w - 70.0, 32.0], my3_text(), &format!("Gyroscope {value}"));
             }
         } else if page == Page::Skins {
             self.wardrobe.draw(
@@ -2019,7 +2032,7 @@ impl Launcher {
             let show_corner_links = page == Page::Settings
                 && self.catalog.settings_category == SettingsCategory::Overview;
             let status = self.error.as_deref().unwrap_or(&self.catalog.status);
-            if !status.is_empty() && !page.is_catalog() {
+            if !status.is_empty() && !page.is_catalog() && (page != Page::Play || self.error.is_some()) {
                 let max_snack_w = if show_corner_links {
                     (content_w - 224.0).max(120.0)
                 } else {
@@ -7246,6 +7259,11 @@ impl Launcher {
                         self.catalog.search(&self.home);
                     }
                 }
+            }
+            Some(Action::SceneGyro(direction)) => {
+                self.catalog.config.scene_gyro_sensitivity =
+                    (self.catalog.config.scene_gyro_sensitivity as i32 + i32::from(direction) * 25).clamp(0, 300) as u32;
+                self.catalog.config.save(&self.home)?;
             }
             Some(Action::Profile) => self.open_chooser(chooser::Kind::Profile),
             Some(Action::Renderer) => self.open_chooser(chooser::Kind::Renderer),
