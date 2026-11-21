@@ -454,6 +454,21 @@ impl Wardrobe {
         }
     }
 
+    /// The same applied-skin preview used by the wardrobe, placed in the shared scene.
+    /// Keeping the hit rectangle here makes drag/pinch orbit work on the dashboard too.
+    pub fn draw_scene(&mut self, ui: &mut Ui, rect: [f32; 4]) {
+        self.rect = rect;
+        let [x, y, w, h] = rect;
+        let scale = (w / 160.0).min(h / 200.0);
+        let ox = x + (w - 160.0 * scale) * 0.5;
+        let oy = y + (h - 200.0 * scale) * 0.5;
+        ui.rounded(x + w * 0.23, y + h * 0.91, w * 0.54, 6.0, 3.0,
+            horizon_client::hud::rgba(8, 10, 20, 100));
+        for ([bx, by, bw, bh], col) in &self.bitmap {
+            ui.rounded(ox + bx * scale, oy + by * scale, bw * scale, bh * scale, 0.0, *col);
+        }
+    }
+
     pub fn gesture(&mut self, touch: &winit::event::Touch, density: f32) -> bool {
         use winit::event::TouchPhase;
         let point = [
@@ -508,11 +523,9 @@ impl Wardrobe {
         let theme = active_theme();
         let now = std::time::Instant::now();
         let tab_t = motion::spring_expressive_default(motion::progress(self.tab_changed_at, now, 0.24));
-        let sel_t = motion::spring_expressive_spatial(motion::progress(self.selection_changed_at, now, 0.26));
         let slide_y = (1.0 - tab_t) * 8.0;
 
         let h = ui.h;
-        let wide = w >= 580.0;
 
         // 1. Header & Segmented Skins / Capes Switcher
         ui.text(
@@ -595,175 +608,23 @@ impl Wardrobe {
         };
         let model = selection.model;
 
-        // 2. Left / Top Studio 3D Preview Card
-        let preview_y = tabs_y + 48.0;
-        let preview_w = if wide { 248.0_f32.min(w * 0.41) } else { w };
-        let preview_h = if wide {
-            (h - preview_y - 84.0).clamp(165.0, 276.0)
-        } else {
-            (h * 0.30).clamp(138.0, 192.0)
-        };
-        let px = x;
-        self.rect = [px, preview_y, preview_w, preview_h];
-
-        // Studio stage background with subtle inner rim and pedestal
-        ui.rounded(px, preview_y, preview_w, preview_h, 10.0, theme.surface);
-        ui.rounded(
-            px + 4.0,
-            preview_y + 4.0,
-            preview_w - 8.0,
-            preview_h - 8.0,
-            13.0,
-            theme.surface_dim,
-        );
-        ui.stroke_rounded(px, preview_y, preview_w, preview_h, 10.0, 1.2, theme.border);
-
-        // Studio floor pedestal oval beneath the character
-        let ped_w = (preview_w * 0.46).clamp(72.0, 124.0);
-        let ped_h = 12.0;
-        let ped_x = px + (preview_w - ped_w) * 0.5;
-        let ped_y = preview_y + preview_h - 48.0;
-        ui.rounded(ped_x, ped_y, ped_w, ped_h, 6.0, theme.accent_soft);
-        ui.stroke_rounded(ped_x, ped_y, ped_w, ped_h, 6.0, 1.0, theme.border);
-
-        // Top-left status badge inside studio card
-        let badge_txt = if self.capes {
-            if selection.hide_cape {
-                "Cape Hidden"
-            } else {
-                "3D Cape View"
-            }
-        } else if model == Model::Slim {
-            "Slim (3px Arms)"
-        } else {
-            "Classic (4px Arms)"
-        };
-        let badge_w = (ui.measure(Face::SemiBold, 9.5, badge_txt) + 16.0).min(preview_w * 0.55);
-        ui.rounded(
-            px + 10.0,
-            preview_y + 10.0,
-            badge_w,
-            20.0,
-            6.0,
-            theme.surface_selected,
-        );
-        ui.border(
-            px + 10.0,
-            preview_y + 10.0,
-            badge_w,
-            20.0,
-            6.0,
-            theme.accent,
-        );
-        ui.centered_fit(
-            Face::SemiBold,
-            9.5,
-            [px + 10.0, preview_y + 10.0, badge_w, 20.0],
-            theme.text_primary,
-            badge_txt,
-        );
-
-        // Top-right orbit & zoom hint
-        let hint = format!("{:.0}%", self.camera.zoom * 100.0);
-        let hint_w = 42.0;
-        ui.rounded(
-            px + preview_w - hint_w - 10.0,
-            preview_y + 10.0,
-            hint_w,
-            20.0,
-            6.0,
-            theme.surface,
-        );
-        ui.centered_fit(
-            Face::Mono,
-            9.0,
-            [
-                px + preview_w - hint_w - 10.0,
-                preview_y + 10.0,
-                hint_w,
-                20.0,
-            ],
-            theme.text_muted,
-            &hint,
-        );
-
-        // Render 3D character bitmap with subtle selection pop scale
-        let pop = 0.97 + 0.03 * sel_t;
-        let scale = ((preview_w / 160.0).min((preview_h - 18.0) / 200.0)) * pop;
-        let ox = px + (preview_w - 160.0 * scale) * 0.5;
-        let oy = preview_y + (preview_h - 14.0 - 200.0 * scale) * 0.5;
-        for ([bx, by, bw, bh], col) in &self.bitmap {
-            ui.rounded(
-                ox + bx * scale,
-                oy + by * scale,
-                bw * scale,
-                bh * scale,
-                0.0,
-                *col,
-            );
+        // The portrait is shared with the dashboard, rather than duplicated in
+        // this panel. The same camera and selected skin drive both views.
+        let scene_x = 12.0;
+        let scene_w = (x - 30.0).max(100.0);
+        let controls_y = h - 79.0;
+        let button_w = 38.0;
+        for (i, (label, action)) in [("<", Action::WardrobeRotate(-1)), (">", Action::WardrobeRotate(1))].into_iter().enumerate() {
+            button(ui, targets, [scene_x + scene_w * 0.5 - 41.0 + i as f32 * 44.0, controls_y, button_w, 28.0], label, action, false);
         }
-
-        // Floating camera orbit & zoom dock at the bottom of the 3D preview card
-        let control_y = preview_y + preview_h - 36.0;
-        let btn_w = 34.0;
-        let gap = 6.0;
-        let cluster = 2.0 * btn_w + gap;
-        let cx = px + (preview_w - cluster) * 0.5;
-        for (i, (label, action)) in [
-            ("<", Action::WardrobeRotate(-1)),
-            (">", Action::WardrobeRotate(1)),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            button(
-                ui,
-                targets,
-                [cx + i as f32 * (btn_w + gap), control_y, btn_w, 28.0],
-                label,
-                action,
-                false,
-            );
-        }
-
-        // Primary quick-toggle button directly below 3D preview card
-        let primary_toggle_y = preview_y + preview_h + 8.0;
-        if self.capes {
-            button(
-                ui,
-                targets,
-                [px, primary_toggle_y, preview_w, 34.0],
-                if selection.hide_cape {
-                    "Cape Visibility: Hidden (Tap to Show)"
-                } else {
-                    "Cape Visibility: Shown (Tap to Hide)"
-                },
-                Action::WardrobeHideCape,
-                !selection.hide_cape,
-            );
-        } else {
-            button(
-                ui,
-                targets,
-                [px, primary_toggle_y, preview_w, 34.0],
-                if model == Model::Slim {
-                    "Arm Model: Alex / Slim (3px)"
-                } else {
-                    "Arm Model: Steve / Classic (4px)"
-                },
-                Action::WardrobeModel,
-                false,
-            );
-        }
-
-        // 3. Right / Bottom Gallery & Details Column
-        let lx = if wide { x + preview_w + 16.0 } else { x };
-        let lw = if wide { w - preview_w - 16.0 } else { w };
-        let listtop = if wide {
-            preview_y + slide_y
-        } else {
-            primary_toggle_y + 42.0 + slide_y
-        };
+        button(ui, targets, [scene_x, h - 45.0, scene_w, 30.0],
+            if self.capes {
+                if selection.hide_cape { "Cape hidden" } else { "Cape visible" }
+            } else if model == Model::Slim { "Arm Model: Slim (3px)" } else { "Arm Model: Classic (4px)" },
+            if self.capes { Action::WardrobeHideCape } else { Action::WardrobeModel }, false);
+        let lx = x;
+        let lw = w;
+        let listtop = tabs_y + 48.0 + slide_y;
 
         // Active Appearance Details & Primary Action Bar
         let active_title = if let Some(id) = selected_id {

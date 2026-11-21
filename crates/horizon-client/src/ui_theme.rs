@@ -205,6 +205,7 @@ struct Cache {
     images: HashMap<String, Rect>,
     shelf: (u32, u32, u32),
     image_shelf: (u32, u32, u32),
+    scene: Option<Rect>,
     pending: Vec<crate::font::Patch>,
     glyph_scratch: Vec<(f32, f32, Rect)>,
     /// The atlas the entries were uploaded to (a new atlas starts over).
@@ -227,6 +228,7 @@ fn with_cache<R>(atlas: &HudAtlas, f: impl FnOnce(&mut Cache) -> R) -> R {
             images: HashMap::with_capacity(64),
             shelf: (0, 0, 0),
             image_shelf: (0, 320, 0),
+            scene: None,
             pending: Vec::with_capacity(64),
             glyph_scratch: Vec::with_capacity(128),
             atlas: id,
@@ -237,6 +239,7 @@ fn with_cache<R>(atlas: &HudAtlas, f: impl FnOnce(&mut Cache) -> R) -> R {
             cache.images.clear();
             cache.shelf = (0, 0, 0);
             cache.image_shelf = (0, 320, 0);
+            cache.scene = None;
             cache.pending.clear();
         }
         f(cache)
@@ -774,7 +777,8 @@ impl Cache {
     fn place_image(&mut self, atlas: &HudAtlas, w: u32, h: u32) -> Option<(u32, u32, Rect)> {
         let region = Self::region(atlas)?;
         let band_top = 320u32.min(region.h.saturating_sub(64));
-        let band_bottom = region.h;
+        // The lower half is reserved for the launcher landscape.
+        let band_bottom = region.h.min(512);
         if w > region.w || band_top + h > band_bottom {
             return None;
         }
@@ -818,6 +822,21 @@ impl Cache {
             w,
             h,
         })
+    }
+    // A fixed, non-evicting slot below the thumbnail shelf prevents catalog icon
+    // churn from overwriting the scene while a frame is being composed.
+    fn scene(&mut self, atlas: &HudAtlas, w: u32, h: u32, rgba: &[u8]) -> Option<Rect> {
+        if let Some(rect) = self.scene { return Some(rect); }
+        let region = Self::region(atlas)?;
+        if w == 0 || h == 0 || w > region.w || 512 + h > region.h
+            || rgba.len() != (w * h * 4) as usize { return None; }
+        let ax = (region.u0 * atlas.width as f32).round() as u32;
+        let ay = (region.v0 * atlas.height as f32).round() as u32 + 512;
+        self.pending.push(crate::font::Patch { x: ax, y: ay, width: w, height: h, rgba: rgba.to_vec() });
+        let rect = Rect { u0: ax as f32 / atlas.width as f32, v0: ay as f32 / atlas.height as f32,
+            u1: (ax + w) as f32 / atlas.width as f32, v1: (ay + h) as f32 / atlas.height as f32, w, h };
+        self.scene = Some(rect);
+        Some(rect)
     }
     fn upload(&mut self, atlas: &HudAtlas, w: u32, h: u32, alpha: &[f32]) -> Option<Rect> {
         let rgba: Vec<u8> = alpha
@@ -2137,6 +2156,16 @@ impl<'a> Ui<'a> {
             color::with_alpha(theme.text_primary, alpha),
             &fitted,
         );
+    }
+
+    /// Draw the launcher's uncropped landscape from a reserved atlas slot.
+    #[allow(clippy::too_many_arguments)]
+    pub fn scene_image(&mut self, w: u32, h: u32, rgba: &[u8], x: f32, y: f32, dw: f32, dh: f32) -> bool {
+        let atlas = self.atlas;
+        let Some(rect) = with_cache(atlas, |c| c.scene(atlas, w, h, rgba)) else { return false; };
+        let (x0, y0, x1, y1) = (self.px_x(x), self.px_y(y), self.px_x(x + dw), self.px_y(y + dh));
+        self.emit_clipped_uv(x0, y0, x1, y1, rect.u0, rect.v0, rect.u1, rect.v1, u32::MAX);
+        true
     }
 
     /// Draw a cached RGBA project icon (`w x h`) into `(x, y, dw, dh)` dp.

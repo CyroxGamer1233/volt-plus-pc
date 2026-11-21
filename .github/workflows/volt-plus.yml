@@ -119,10 +119,24 @@ jobs:
         env:
           ABI: ${{ matrix.abi }}
         run: |
+          set -o pipefail
           python3 tools/android_build.py --abi "$ABI" --public --profile release \
             --sdk "$ANDROID_HOME" --java-home "${JAVA_HOME_17_X64:-$JAVA_HOME}" --gradle "$(command -v gradle)" \
             --ndk-version 28.2.13676358 --build-tools-version 35.0.0 \
-            --release-version-code "$((2026112100 + GITHUB_RUN_NUMBER))"
+            --release-version-code "$((2026112100 + GITHUB_RUN_NUMBER))" 2>&1 | tee "$RUNNER_TEMP/volt-build.log"
+      - name: Summarize compiler errors without credentials
+        if: failure()
+        run: |
+          python3 - <<'PY'
+          import os, re
+          from pathlib import Path
+          path = Path(os.environ['RUNNER_TEMP']) / 'volt-build.log'
+          if path.exists():
+              lines = path.read_text(errors='replace').splitlines()
+              for line in lines:
+                  if re.match(r'^error(?:\[E[0-9]+\])?: ', line):
+                      print('::error::' + line[:400].replace('%', '%25'))
+          PY
       - name: Collect only audited APK and public metadata
         env:
           ABI: ${{ matrix.abi }}

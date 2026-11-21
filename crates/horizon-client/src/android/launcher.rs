@@ -45,6 +45,7 @@ pub(super) struct Launcher {
     game: Option<Box<dyn ApplicationHandler>>,
     cursor: (f64, f64),
     mouse_down: bool,
+    focused: bool,
     feedback: Option<(pages::Action, Instant)>,
     install: Arc<Mutex<horizon_client::official_install::InstallProgress>>,
     install_paused: Arc<std::sync::atomic::AtomicBool>,
@@ -233,6 +234,7 @@ impl Launcher {
             game: None,
             cursor: (0.0, 0.0),
             mouse_down: false,
+            focused: true,
             feedback: None,
             install: Arc::default(),
             install_paused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -713,6 +715,8 @@ impl ApplicationHandler for Launcher {
             return game.suspended(events);
         }
         self.drag = None;
+        self.focused = false;
+        let _ = crate::device_runtime::gyro(false, 1.0, 0);
         if let Some(renderer) = &mut self.renderer {
             renderer.suspend_surface();
         }
@@ -724,8 +728,9 @@ impl ApplicationHandler for Launcher {
         if matches!(event, WindowEvent::Resized(_)) {
             let _ = crate::native_ime::viewport_bottom();
         }
-        if matches!(event, WindowEvent::Focused(true)) {
-            self.configure_screen();
+        if let WindowEvent::Focused(focused) = &event {
+            self.focused = *focused;
+            if *focused { self.configure_screen(); }
         }
         if let Some(game) = &mut self.game {
             game.window_event(events, id, event);
@@ -756,6 +761,7 @@ impl ApplicationHandler for Launcher {
                 self.controller_repeat = None;
                 self.mouse_down = false;
                 self.drag = None;
+                let _ = crate::device_runtime::gyro(false, 1.0, 0);
                 Ok(())
             }
             WindowEvent::MouseInput {
@@ -1010,6 +1016,8 @@ impl ApplicationHandler for Launcher {
                     .as_ref()
                     .is_some_and(|m| m.loading)
                 || self.anim.is_active()
+                || (self.focused && !self.catalog.config.battery_perf_mode
+                    && !horizon_client::ui_theme::motion::reduced_motion())
                 || ({
                     let theme = horizon_client::ui_theme::active_theme();
                     (theme.is_horizon || theme.is_nightly || theme.is_custom)
