@@ -21,6 +21,14 @@ def archive(files):
 
 
 class ReleaseAuditTests(unittest.TestCase):
+    def test_volt_plus_is_the_standard_package(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            apk = Path(temporary) / 'test.apk'
+            apk.write_bytes(b'test')
+            with patch.object(audit, 'inspect_payload', return_value={'findings': []}), patch.object(
+                    audit.subprocess, 'check_output', return_value="package: name='vp.net.voltplus'\n"):
+                self.assertTrue(audit.audit(apk, 'aapt2')['passed'])
+
     def test_dev_package_does_not_relax_stable_identity_or_debuggable_check(self):
         with tempfile.TemporaryDirectory() as temporary:
             apk = Path(temporary) / 'test.apk'
