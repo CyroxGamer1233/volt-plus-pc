@@ -50,11 +50,21 @@ jobs:
           password = os.environ.get('RELEASE_KEYSTORE_PASSWORD', '')
           alias = os.environ.get('RELEASE_KEY_ALIAS', '')
           key_password = os.environ.get('RELEASE_KEY_PASSWORD', '') or password
-          if not value or not password or not alias:
-              raise SystemExit('Permanent signing key missing: configure ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD and ANDROID_KEY_ALIAS as Actions secrets')
+          missing = [name for name, item in (
+              ('ANDROID_KEYSTORE_BASE64', value), ('ANDROID_KEYSTORE_PASSWORD', password),
+              ('ANDROID_KEY_ALIAS', alias)) if not item]
+          if missing:
+              for name in missing:
+                  print(f'::error::Missing required Actions secret: {name}', flush=True)
+              raise SystemExit(1)
+          try:
+              decoded = base64.b64decode(value, validate=True)
+          except (ValueError, base64.binascii.Error):
+              print('::error::ANDROID_KEYSTORE_BASE64 is not valid single-line base64', flush=True)
+              raise SystemExit(1)
           path = Path('.local/android/ci.keystore')
           path.parent.mkdir(parents=True, exist_ok=True)
-          path.write_bytes(base64.b64decode(value, validate=True))
+          path.write_bytes(decoded)
           path.chmod(0o600)
           # Gradle resolves a relative storeFile against packaging/android, so pass an
           # absolute path and the credentials that belong to this keystore.
