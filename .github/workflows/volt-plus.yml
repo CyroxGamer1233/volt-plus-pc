@@ -133,9 +133,14 @@ jobs:
           path = Path(os.environ['RUNNER_TEMP']) / 'volt-build.log'
           if path.exists():
               lines = path.read_text(errors='replace').splitlines()
-              for line in lines:
-                  if re.match(r'^error(?:\[E[0-9]+\])?: ', line):
-                      print('::error::' + line[:400].replace('%', '%25'))
+              # Never emit credentials, even if a tool accidentally writes one.
+              sensitive = [v for k, v in os.environ.items() if v and ('PASSWORD' in k or 'TOKEN' in k or 'KEYSTORE' in k or k.endswith('_KEY'))]
+              for line in lines[-40:]:
+                  line = re.sub(r'\x1b\[[0-9;]*m', '', line)
+                  for value in sensitive:
+                      line = line.replace(value, '[redacted]')
+                  line = re.sub(r'[A-Za-z0-9+/]{120,}={0,2}', '[redacted]', line)
+                  print('::notice::' + line[:450].replace('%', '%25'))
           PY
       - name: Collect only audited APK and public metadata
         env:
