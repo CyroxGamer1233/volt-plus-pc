@@ -46,7 +46,8 @@ jobs:
           python3 - <<'PY'
           import base64, os
           from pathlib import Path
-          value = os.environ.get('RELEASE_KEYSTORE', '')
+          # GitHub secrets may include line breaks from copied base64 output.
+          value = ''.join(os.environ.get('RELEASE_KEYSTORE', '').split())
           password = os.environ.get('RELEASE_KEYSTORE_PASSWORD', '')
           alias = os.environ.get('RELEASE_KEY_ALIAS', '')
           key_password = os.environ.get('RELEASE_KEY_PASSWORD', '') or password
@@ -60,7 +61,7 @@ jobs:
           try:
               decoded = base64.b64decode(value, validate=True)
           except (ValueError, base64.binascii.Error):
-              print('::error::ANDROID_KEYSTORE_BASE64 is not valid single-line base64', flush=True)
+              print('::error::ANDROID_KEYSTORE_BASE64 is not valid base64; copy only the encoded keystore', flush=True)
               raise SystemExit(1)
           path = Path('.local/android/ci.keystore')
           path.parent.mkdir(parents=True, exist_ok=True)
