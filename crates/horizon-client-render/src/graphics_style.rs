@@ -62,7 +62,8 @@ pub const STYLE: Style = Style {
     header_height: 16.0,
     band: 33.0,
     title_color: u32::MAX,
-    header_color: opaque(255, 255, 85),
+    // Volt Plus's copper section headings, the launcher dashboard's accent.
+    header_color: opaque(0xc9, 0x8b, 0x57),
     description_color: opaque(170, 170, 170),
     cost_colors: [
         opaque(120, 200, 120),
@@ -94,6 +95,32 @@ impl Style {
         let (w, h) = (batch.width, batch.height);
         ui::menu_background(batch, atlas, 0.0, 0.0, w, h, in_world);
         ui::list_background(batch, atlas, top, bottom, in_world);
+        // Thin warm rules in place of the violet chrome: one under the title band, one
+        // above the buttons, and a hairline down the list's left edge.
+        batch.fill(
+            atlas,
+            0.0,
+            top,
+            w,
+            1.0,
+            crate::hud::rgb(horizon_theme::warm::ACCENT, 150),
+        );
+        batch.fill(
+            atlas,
+            0.0,
+            bottom - 1.0,
+            w,
+            1.0,
+            crate::hud::rgb(horizon_theme::warm::RULE, 210),
+        );
+        batch.fill(
+            atlas,
+            0.0,
+            top + 1.0,
+            2.0,
+            (bottom - top - 2.0).max(0.0),
+            crate::hud::rgb(horizon_theme::warm::ACCENT_DEEP, 110),
+        );
     }
     pub fn frame(
         &self,

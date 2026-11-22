@@ -185,6 +185,12 @@ impl Game<'_> {
         self.watch_pack_folder();
         let mut ui = std::mem::take(&mut self.ui.options);
         ui.draw(&self.settings, batch, &self.gui.atlas, self.cursor);
+        // The key picker belongs on top of whatever page is open, including the ones
+        // that draw their own screen inside `draw`; drawing it again is idempotent.
+        #[cfg(target_os = "android")]
+        if ui.selected_key.is_some() {
+            ui.draw_touch_key_picker(batch, &self.gui.atlas);
+        }
         self.ui.options = ui;
         self.show_calibration(batch.height);
         #[cfg(target_os = "android")]
@@ -332,6 +338,39 @@ impl Game<'_> {
     }
     pub(super) fn options_bind_mouse(&mut self, button: MouseButton) -> Result<()> {
         let events = self.ui.options.bind_mouse(&mut self.settings, button);
+        self.handle_option_events(events)
+    }
+    /// The picker's plate, grid or buttons under the virtual mouse, in GUI pixels.
+    pub(super) fn options_picker_over_panel(&self) -> bool {
+        let [w, h] = self.touch_size();
+        let b = HudBatch::new([w, h]);
+        self.ui.options.touch_key_picker_contains(
+            (b.width, b.height),
+            self.cursor.0,
+            self.cursor.1,
+        )
+    }
+    /// Holds the picker cell the pointer is on, so the tap shows at once.
+    pub(super) fn options_picker_press(&mut self) {
+        let [w, h] = self.touch_size();
+        let b = HudBatch::new([w, h]);
+        self.ui.options.touch_key_picker_press(
+            (b.width, b.height),
+            self.cursor.0,
+            self.cursor.1,
+        );
+    }
+    /// A click (or a virtual-mouse tap) on the picker: binds the key under the
+    /// pointer, turns its page, or cancels.
+    pub(super) fn options_picker_click(&mut self) -> Result<()> {
+        let [w, h] = self.touch_size();
+        let b = HudBatch::new([w, h]);
+        let events = self.ui.options.touch_key_picker(
+            &mut self.settings,
+            (b.width, b.height),
+            self.cursor.0,
+            self.cursor.1,
+        );
         self.handle_option_events(events)
     }
     pub(super) fn handle_option_events(&mut self, events: Vec<Event>) -> Result<()> {

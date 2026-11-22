@@ -275,6 +275,10 @@ public final class HorizonActivity extends android.app.NativeActivity {
     }
 
     @Override protected void onActivityResult(int request, int result, android.content.Intent data) {
+        if (request == ScreenRecorder.REQUEST_CONSENT) {
+            ScreenRecorder.onActivityResult(this, request, result, data);
+            return;
+        }
         super.onActivityResult(request, result, data);
         if (request != 4101 && request != 4102 && request != 4103) return;
         try {

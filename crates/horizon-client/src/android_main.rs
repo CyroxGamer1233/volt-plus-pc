@@ -56,6 +56,8 @@ mod native_ime;
 mod performance;
 #[path = "android/platform.rs"]
 mod platform;
+#[path = "android/recorder.rs"]
+mod screen_record;
 #[rustfmt::skip]
 #[allow(dead_code)]
 #[path = "../../../launcher/src/proxy.rs"]

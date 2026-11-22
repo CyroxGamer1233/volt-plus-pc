@@ -2,13 +2,14 @@
 //! Controls, Key Binds, Mouse Settings, Chat Settings, Accessibility,
 //! Language and Resource Packs, laid out like vanilla's HeaderAndFooter /
 //! OptionsList screens and drawn with the shared widgets.
+use horizon_theme::warm;
 use std::time::Instant;
 
 pub use crate::settings::Opt;
 
 use crate::{
     gamepad::{self, GlyphStyle},
-    hud::{HudAtlas, HudBatch, rgba},
+    hud::{HudAtlas, HudBatch, rgb, rgba},
     keybinds::{self, CATEGORIES, KeyBinds, MAPPINGS},
     lang::{self, LanguageInfo},
     settings::{SOUND_SOURCES, Settings},
@@ -1712,6 +1713,12 @@ pub struct OptionsUi {
     /// mod's, `selected_native_key`).
     pub selected_key: Option<&'static str>,
     touch_key_page: usize,
+    /// The cell of the touch key picker held down, as an index into the page's
+    /// keys: the picker draws it pressed until the finger lifts.
+    touch_key_pressed: Option<usize>,
+    /// Whether the picker has seen the press of the gesture that is now ending.
+    /// The tap that opens the picker must not bind the cell it opened over.
+    touch_key_armed: bool,
     /// The native mod's key waiting: (mod, key) in `mods.installed`.
     selected_native_key: Option<(usize, usize)>,
     /// Controller Binds: the action waiting for a pad button.
@@ -1783,6 +1790,8 @@ impl Default for OptionsUi {
             scrollbar_drag_y: None,
             selected_key: None,
             touch_key_page: 0,
+            touch_key_pressed: None,
+            touch_key_armed: false,
             selected_native_key: None,
             selected_pad_action: None,
             pad_style: GlyphStyle::Xbox,
@@ -3836,9 +3845,32 @@ impl OptionsUi {
                 });
             }
             match &wd.kind {
-                WKind::Button { label, active, .. } => {
+                WKind::Button { label, active, act } => {
                     let label = fitted.as_ref().map_or(label, |f| &f.0);
-                    ui::button(batch, atlas, wd.x, wd.y, wd.w, wd.h, label, *active, hover);
+                    if *act == Act::Done {
+                        // Volt Plus: the reference layout's one big action is a flat
+                        // copper plate rather than a vanilla sprite.
+                        let plate = if !*active {
+                            crate::hud::rgb(horizon_theme::warm::BORDER, 230)
+                        } else if hover {
+                            crate::hud::rgb(horizon_theme::warm::ACCENT_HI, 255)
+                        } else {
+                            crate::hud::rgb(horizon_theme::warm::ACCENT, 255)
+                        };
+                        batch.fill(atlas, wd.x, wd.y, wd.w, wd.h, plate);
+                        batch.fill(atlas, wd.x, wd.y, wd.w, 1.0, crate::hud::rgb(horizon_theme::warm::ACCENT_HI, 255));
+                        ui::centered_text(
+                            batch,
+                            atlas,
+                            label,
+                            wd.x + 2.0,
+                            wd.y + 6.0,
+                            wd.w - 4.0,
+                            crate::hud::rgb(horizon_theme::warm::ON_ACCENT, 255),
+                        );
+                    } else {
+                        ui::button(batch, atlas, wd.x, wd.y, wd.w, wd.h, label, *active, hover);
+                    }
                     crate::widgets::last_narratable(|n| {
                         narrate_widget(n, s, wd, hover, list_key, framebuffer);
                     });
@@ -4004,6 +4036,7 @@ impl OptionsUi {
             }
             self.settings_search = search;
         }
+        self.draw_warm_chrome(batch, atlas);
         if let Some(lines) = tooltip {
             ui::tooltip(batch, atlas, &lines, cursor);
         }
@@ -4012,50 +4045,182 @@ impl OptionsUi {
         }
     }
 
+    /// The reference layout's warm chrome on the restyled pages: a thin copper rule under
+    /// the title, another above the footer, and a quiet warm rail down the left edge.
+    fn draw_warm_chrome(&self, batch: &mut HudBatch, atlas: &HudAtlas) {
+        let page = self.page();
+        let restyled = matches!(
+            page,
+            Page::Video
+                | Page::Horizon
+                | Page::Mods
+                | Page::NativeMod(_)
+                | Page::Graphics
+                | Page::GraphicsAdvanced
+                | Page::GraphicsHdr
+                | Page::KeyBinds
+        );
+        if !restyled {
+            return;
+        }
+        let (w, h) = (batch.width, batch.height);
+        batch.fill(atlas, 0.0, 31.0, w, 1.0, rgb(warm::ACCENT, 165));
+        batch.fill(atlas, 0.0, h - 32.0, w, 1.0, rgb(warm::RULE, 210));
+        batch.fill(
+            atlas,
+            0.0,
+            32.0,
+            2.0,
+            (h - 64.0).max(0.0),
+            rgb(warm::ACCENT_DEEP, 105),
+        );
+    }
     fn touch_picker_geometry(size: (f32, f32)) -> (f32, f32, f32, f32) {
         let width = (size.0 - 24.0).min(440.0).max(40.0);
         let row_h = ((size.1 - 80.0) / 8.0).clamp(8.0, 24.0);
         ((size.0 - width) * 0.5, 28.0, width, row_h)
     }
+    /// The key of the picker's current page under `(x, y)`, if any: the touch
+    /// and the virtual-mouse paths share it, so both hit the same cells.
+    fn touch_picker_key_at(&self, size: (f32, f32), x: f32, y: f32) -> Option<usize> {
+        let (left, top, width, row_h) = Self::touch_picker_geometry(size);
+        if !(left..left + width).contains(&x) || !(top..top + row_h * 8.0).contains(&y) {
+            return None;
+        }
+        let keys = keybinds::available_keys();
+        let pages = keys.len().div_ceil(32);
+        let page = self.touch_key_page.min(pages.saturating_sub(1));
+        let col = (((x - left) / (width / 4.0)) as usize).min(3);
+        let row = (((y - top) / row_h) as usize).min(7);
+        (page * 32 + row * 4 + col < keys.len()).then_some(row * 4 + col)
+    }
     /// A paged Minecraft-style picker, covering every registered keyboard key.
+    /// The held cell is drawn pressed, so a tap on a touchscreen and a click
+    /// from the virtual mouse both answer immediately.
     pub fn draw_touch_key_picker(&self, batch: &mut HudBatch, atlas: &HudAtlas) {
         if self.selected_key.is_none() { return; }
         let size = (batch.width, batch.height);
         let (left, top, width, row_h) = Self::touch_picker_geometry(size);
-        batch.fill(atlas, 0.0, 0.0, size.0, size.1, crate::hud::rgba(0, 0, 0, 170));
+        batch.fill(atlas, 0.0, 0.0, size.0, size.1, rgba(10, 7, 5, 200));
+        let grid_h = row_h * 8.0;
+        let nav_y = top + grid_h + 6.0;
+        // The warm brown plate of the reference layout: one copper hairline
+        // round the grid, a dark seat under it.
+        batch.fill(
+            atlas,
+            left - 5.0,
+            top - 5.0,
+            width + 10.0,
+            grid_h + 6.0 + 32.0,
+            rgb(warm::SURFACE_DIM, 236),
+        );
+        for (x, y, w, h) in [
+            (left - 5.0, top - 5.0, width + 10.0, 1.0),
+            (left - 5.0, nav_y + 24.0, width + 10.0, 1.0),
+        ] {
+            batch.fill(atlas, x, y, w, h, rgb(warm::ACCENT, 200));
+        }
         let heading = Text::literal("Tap a key to bind it").with_color(text::YELLOW);
         batch.text_styled(atlas, &heading, (size.0 - atlas.font.width_text(&heading)) * 0.5, 12.0, u32::MAX, true);
         let keys = keybinds::available_keys();
-        let pages = (keys.len() + 31) / 32;
+        let pages = keys.len().div_ceil(32);
         let page = self.touch_key_page.min(pages.saturating_sub(1));
         let cell_w = width / 4.0;
         for (i, (token, _)) in keys.iter().skip(page * 32).take(32).enumerate() {
             let x = left + (i % 4) as f32 * cell_w;
             let y = top + (i / 4) as f32 * row_h;
             let label = keybinds::display_name(token);
-            ui::button(batch, atlas, x + 1.0, y + 1.0, cell_w - 2.0, (row_h - 2.0).max(6.0), &label, true, false);
+            let held = self.touch_key_pressed == Some(i);
+            let w = (cell_w - 2.0).max(6.0);
+            let h = (row_h - 2.0).max(6.0);
+            ui::button(batch, atlas, x + 1.0, y + 1.0, w, h, &label, true, held);
+            if held {
+                // Minecraft's pressed plate plus the reference accent: the
+                // cell sinks a pixel and takes a copper edge.
+                batch.fill(atlas, x + 1.0, y + h - 1.0, w, 2.0, rgb(warm::ACCENT, 235));
+                batch.fill(atlas, x + 1.0, y + 1.0, w, 1.0, rgb(warm::ON_ACCENT, 160));
+            }
         }
-        let nav_y = top + 8.0 * row_h + 4.0;
         ui::button(batch, atlas, left, nav_y, width * 0.28, 20.0, &Text::literal("< Previous"), page > 0, false);
         ui::button(batch, atlas, left + width * 0.36, nav_y, width * 0.28, 20.0, &Text::literal("Cancel"), true, false);
         ui::button(batch, atlas, left + width * 0.72, nav_y, width * 0.28, 20.0, &Text::literal("Next >"), page + 1 < pages, false);
+        if nav_y + 34.0 < size.1 {
+            let count =
+                Text::literal(format!("{} / {}  •  {} keys", page + 1, pages.max(1), keys.len()));
+            batch.text_styled(
+                atlas,
+                &count,
+                left + width - atlas.font.width_text(&count),
+                nav_y + 25.0,
+                rgb(warm::ACCENT_HI, 220),
+                false,
+            );
+            let hint = Text::literal("A mouse button outside the grid binds it");
+            batch.text_styled(
+                atlas,
+                &hint,
+                left,
+                nav_y + 25.0,
+                rgb(warm::TEXT_MUTED, 255),
+                false,
+            );
+        }
     }
-    /// Called for touch releases, not physical mouse clicks; binding follows the normal save path.
+    /// A finger or the virtual mouse went down on the picker: remembers which
+    /// cell is held so the next frame draws it pressed. Returns whether the
+    /// press landed on the grid (a press outside it can bind a mouse button).
+    pub fn touch_key_picker_press(&mut self, size: (f32, f32), x: f32, y: f32) -> bool {
+        if self.selected_key.is_none() {
+            return false;
+        }
+        let pressed = self.touch_picker_key_at(size, x, y);
+        self.touch_key_pressed = pressed;
+        self.touch_key_armed = true;
+        pressed.is_some()
+    }
+    /// The finger left the screen or the press was cancelled: drop the held cell
+    /// without binding it.
+    pub fn touch_key_picker_cancel(&mut self) {
+        self.touch_key_pressed = None;
+        self.touch_key_armed = false;
+    }
+    /// Whether a press on the open picker is waiting for its release.
+    pub fn picker_armed(&self) -> bool {
+        self.touch_key_armed
+    }
+    /// Whether `(x, y)` is over the picker's plate, grid or its buttons: the
+    /// virtual mouse clicks these instead of binding its own button.
+    pub fn touch_key_picker_contains(&self, size: (f32, f32), x: f32, y: f32) -> bool {
+        if self.selected_key.is_none() {
+            return false;
+        }
+        let (left, top, width, row_h) = Self::touch_picker_geometry(size);
+        let nav_y = top + row_h * 8.0 + 6.0;
+        (left - 6.0..left + width + 6.0).contains(&x) && (top - 6.0..nav_y + 22.0).contains(&y)
+    }
+    /// Called for touch releases and virtual-mouse clicks, not physical mouse
+    /// presses; binding follows the normal save path.
     pub fn touch_key_picker(&mut self, s: &mut Settings, size: (f32, f32), x: f32, y: f32) -> Vec<Event> {
+        self.touch_key_pressed = None;
         if self.selected_key.is_none() { return Vec::new(); }
+        // Only a release that follows a press on the open picker may bind: the tap
+        // that opened it would otherwise pick whatever cell it happened to be over.
+        if !self.touch_key_armed {
+            return Vec::new();
+        }
+        self.touch_key_armed = false;
         let (left, top, width, row_h) = Self::touch_picker_geometry(size);
         let keys = keybinds::available_keys();
-        let pages = (keys.len() + 31) / 32;
+        let pages = keys.len().div_ceil(32);
         let page = self.touch_key_page.min(pages.saturating_sub(1));
-        if x >= left && x < left + width && y >= top && y < top + row_h * 8.0 {
-            let col = ((x - left) / (width / 4.0)) as usize;
-            let row = ((y - top) / row_h) as usize;
-            if let Some((token, _)) = keys.get(page * 32 + row * 4 + col) {
+        if let Some(index) = self.touch_picker_key_at(size, x, y) {
+            if let Some((token, _)) = keys.get(page * 32 + index) {
                 self.touch_key_page = 0;
                 return self.bind_key(s, (*token).to_owned());
             }
+            return Vec::new();
         }
-        let nav_y = top + 8.0 * row_h + 4.0;
+        let nav_y = top + row_h * 8.0 + 6.0;
         if y >= nav_y && y < nav_y + 20.0 && x >= left && x < left + width {
             let t = (x - left) / width;
             if t < 0.28 { self.touch_key_page = page.saturating_sub(1); }

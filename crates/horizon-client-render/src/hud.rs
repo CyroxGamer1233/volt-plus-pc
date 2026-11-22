@@ -779,12 +779,12 @@ impl HudAtlas {
             images.extend(more);
             animated.extend(more_animated);
         }
-        // The title screen's "JAVA EDITION" banner reads "RUST EDITION".
+        // The title screen's "JAVA EDITION" banner reads "VOLT+ EDITION".
         if let Some(edition) = images
             .iter_mut()
             .find(|i| i.0 == crate::title_edition::SPRITE)
             && let Some(pixels) =
-                crate::title_edition::rust_edition(edition.1, edition.2, &edition.3)
+                crate::title_edition::volt_edition(edition.1, edition.2, &edition.3)
         {
             edition.3 = pixels;
         }
@@ -1057,6 +1057,11 @@ pub struct EndPortalFill {
 }
 pub fn rgba(r: u8, g: u8, b: u8, a: u8) -> u32 {
     u32::from(a) << 24 | u32::from(b) << 16 | u32::from(g) << 8 | u32::from(r)
+}
+/// A `0xRRGGBB` design token ([`horizon_theme::warm`]) as a batch colour,
+/// the same packing as [`rgba`].
+pub const fn rgb(c: u32, a: u8) -> u32 {
+    (a as u32) << 24 | (c & 0xff) << 16 | ((c >> 8) & 0xff) << 8 | ((c >> 16) & 0xff)
 }
 impl HudBatch {
     /// Window.calculateScale: the largest scale keeping >= 320x240 GUI pixels,
