@@ -124,8 +124,7 @@ impl Default for AnimState {
             shimmer_phase: 0.0,
             section_expand: [0.0; 3],
             theme_pulse: 1.0,
-            // Start the five-second clock only when the first launcher frame is drawn.
-            intro_start: None,
+            intro_start: Some(std::time::Instant::now()),
             intro_elapsed: 0.0,
             intro_done: false,
             switches: std::collections::HashMap::new(),
@@ -2415,7 +2414,7 @@ impl Launcher {
                 0.55
             };
             let loading_progress = (0.45f32 + session_prog).clamp(0.0, 1.0);
-            if self.anim.intro_elapsed >= horizon_client::ui_theme::VOLT_INTRO_SECONDS {
+            if loading_progress >= 0.999 && self.anim.intro_elapsed >= 1.55 {
                 self.anim.intro_done = true;
             } else {
                 let intro_status = if self.session_worker.is_some() {
@@ -2425,16 +2424,12 @@ impl Launcher {
                 } else {
                     ""
                 };
-                // The intro includes the navigation area; page animations do not offset it.
-                ui.h = full_h;
-                ui.set_clip(None);
-                ui.set_stagger_transition(1.0, 0.0, 0.0);
-                ui.draw_volt_intro(self.anim.intro_elapsed, loading_progress, intro_status);
-                ui.h = h;
-                self.targets.clear();
-                self.list_targets.clear();
-                self.list_view = None;
-                self.targets.push(([0.0, 0.0, w, full_h], Action::SkipIntro));
+                ui.draw_horizon_intro(self.anim.intro_elapsed, loading_progress, intro_status);
+                if loading_progress >= 0.999 {
+                    self.targets.clear();
+                    self.list_targets.clear();
+                    self.targets.push(([0.0, 0.0, w, h], Action::SkipIntro));
+                }
             }
         }
         ui.finish();

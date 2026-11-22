@@ -207,7 +207,6 @@ struct Cache {
     image_shelf: (u32, u32, u32),
     scene: Option<Rect>,
     avatar_revision: Option<u64>,
-    volt_intro_logo: Option<Rect>,
     pending: Vec<crate::font::Patch>,
     glyph_scratch: Vec<(f32, f32, Rect)>,
     /// The atlas the entries were uploaded to (a new atlas starts over).
@@ -232,7 +231,6 @@ fn with_cache<R>(atlas: &HudAtlas, f: impl FnOnce(&mut Cache) -> R) -> R {
             image_shelf: (0, 320, 0),
             scene: None,
             avatar_revision: None,
-            volt_intro_logo: None,
             pending: Vec::with_capacity(64),
             glyph_scratch: Vec::with_capacity(128),
             atlas: id,
@@ -245,7 +243,6 @@ fn with_cache<R>(atlas: &HudAtlas, f: impl FnOnce(&mut Cache) -> R) -> R {
             cache.image_shelf = (0, 320, 0);
             cache.scene = None;
             cache.avatar_revision = None;
-            cache.volt_intro_logo = None;
             cache.pending.clear();
         }
         f(cache)
@@ -858,20 +855,6 @@ impl Cache {
         Some(Rect { u0: ax as f32 / atlas.width as f32, v0: ay as f32 / atlas.height as f32,
             u1: (ax + w) as f32 / atlas.width as f32, v1: (ay + h) as f32 / atlas.height as f32, w, h })
     }
-    /// Dedicated logo slot after the landscape and character slots.
-    fn volt_intro_logo(&mut self, atlas: &HudAtlas, w: u32, h: u32, rgba: &[u8]) -> Option<Rect> {
-        if let Some(rect) = self.volt_intro_logo { return Some(rect); }
-        let region = Self::region(atlas)?;
-        if w == 0 || h == 0 || 1300 + w > region.w || 512 + h > region.h
-            || rgba.len() != (w as usize * h as usize * 4) { return None; }
-        let ax = (region.u0 * atlas.width as f32).round() as u32 + 1300;
-        let ay = (region.v0 * atlas.height as f32).round() as u32 + 512;
-        self.pending.push(crate::font::Patch { x: ax, y: ay, width: w, height: h, rgba: rgba.to_vec() });
-        let rect = Rect { u0: ax as f32 / atlas.width as f32, v0: ay as f32 / atlas.height as f32,
-            u1: (ax + w) as f32 / atlas.width as f32, v1: (ay + h) as f32 / atlas.height as f32, w, h };
-        self.volt_intro_logo = Some(rect);
-        Some(rect)
-    }
     fn upload(&mut self, atlas: &HudAtlas, w: u32, h: u32, alpha: &[f32]) -> Option<Rect> {
         let rgba: Vec<u8> = alpha
             .iter()
@@ -1087,16 +1070,6 @@ impl Cache {
         self.images.insert(key.to_owned(), rect);
         Some(rect)
     }
-}
-
-/// Total startup animation, including its falling fade-out.
-pub const VOLT_INTRO_SECONDS: f32 = 5.0;
-
-/// Each piece falls under an accelerating curve and fades before the intro ends.
-fn volt_intro_fall(elapsed: f32, stagger: f32) -> (f32, f32) {
-    let start = 3.95 + stagger.clamp(0.0, 1.0) * 0.14;
-    let t = ((elapsed - start) / 0.82).clamp(0.0, 1.0);
-    (t * t, 1.0 - t * t * (3.0 - 2.0 * t))
 }
 
 /// One frame of design-system drawing, in dp: the
@@ -3526,84 +3499,6 @@ impl<'a> Ui<'a> {
         self.draw_horizon_logo_art(cx - logo * 0.5, cy - logo * 0.5, logo, a, reveal);
     }
 
-    /// Draw the supplied Volt Plus app logo, falling and fading as one piece.
-    fn draw_volt_intro_logo(&mut self, x: f32, y: f32, size: f32, alpha: f32) {
-        if alpha <= 0.001 { return; }
-        static LOGO: std::sync::OnceLock<Option<(u32, u32, Vec<u8>)>> = std::sync::OnceLock::new();
-        let Some((w, h, rgba)) = LOGO.get_or_init(|| {
-            crate::hud::decode_bytes(include_bytes!("../../../packaging/android/res/drawable-nodpi/launcher_icon.png")).ok()
-        }) else { return; };
-        let atlas = self.atlas;
-        let rect = with_cache(atlas, |cache| {
-            cache.volt_intro_logo(atlas, *w, *h, rgba)
-                .or_else(|| cache.image(atlas, "volt-intro-logo", *w, *h, rgba))
-        });
-        if let Some(rect) = rect {
-            let (x0, y0, x1, y1) = (self.px_x(x), self.px_y(y), self.px_x(x + size), self.px_y(y + size));
-            self.emit_clipped_uv(x0, y0, x1, y1, rect.u0, rect.v0, rect.u1, rect.v1,
-                color::with_alpha(color::hex(0xffffff, 255), alpha));
-        }
-    }
-
-    /// Keep the letters aligned while each drops at a slightly different time.
-    #[allow(clippy::too_many_arguments)]
-    fn volt_intro_letters(&mut self, face: Face, size: f32, cx: f32, y: f32,
-        color: u32, text: &str, elapsed: f32, entrance: f32) {
-        let count = text.chars().count().max(1);
-        let total: f32 = text.chars().map(|ch| {
-            let mut buf = [0; 4]; self.measure(face, size, ch.encode_utf8(&mut buf))
-        }).sum();
-        let mut x = cx - total * 0.5;
-        for (i, ch) in text.chars().enumerate() {
-            let mut buf = [0; 4];
-            let glyph = ch.encode_utf8(&mut buf);
-            let (fall, fade) = volt_intro_fall(elapsed, i as f32 / count as f32);
-            let advance = self.measure(face, size, glyph);
-            if !ch.is_whitespace() && fade * entrance > 0.001 {
-                self.text(face, size, x, y + fall * 90.0,
-                    color::with_alpha(color, fade * entrance), glyph);
-            }
-            x += advance;
-        }
-    }
-
-    /// Five-second Volt Plus startup: the logo and each letter fall and fade at the end.
-    pub fn draw_volt_intro(&mut self, elapsed: f32, loading_progress: f32, status_text: &str) {
-        let theme = active_theme();
-        let (w, h) = (self.w, self.h);
-        let backdrop = 1.0 - motion::ease_out_cubic(((elapsed - 4.20) / 0.80).clamp(0.0, 1.0));
-        self.fill(0.0, 0.0, w, h, color::with_alpha(theme.bg_solid, 0.97 * backdrop));
-        let cx = w * 0.5;
-        let cy = (h * 0.37).clamp(110.0, (h - 150.0).max(110.0));
-        let mark = (h * 0.19).clamp(64.0, 100.0);
-        let entrance = motion::ease_out_cubic((elapsed / 0.45).clamp(0.0, 1.0));
-        let (logo_fall, logo_fade) = volt_intro_fall(elapsed, 0.3);
-        let logo_size = mark * (0.88 + 0.12 * entrance);
-        self.draw_volt_intro_logo(cx - logo_size * 0.5,
-            cy - logo_size * 0.5 + logo_fall * 105.0, logo_size, entrance * logo_fade);
-
-        let title_in = motion::ease_out_cubic(((elapsed - 0.18) / 0.42).clamp(0.0, 1.0));
-        let title_y = cy + mark * 0.68 + (1.0 - title_in) * 8.0;
-        self.volt_intro_letters(Face::SemiBold, 24.0, cx, title_y, theme.text_primary,
-            "VOLT PLUS", elapsed, title_in);
-        let sub_y = title_y + 32.0;
-        self.volt_intro_letters(Face::Medium, 11.5, cx, sub_y, theme.text_muted,
-            "ANDROID LAUNCHER", elapsed, title_in * 0.9);
-        let (fall, fade) = volt_intro_fall(elapsed, 0.5);
-        let bar_w = (w * 0.34).clamp(180.0, 260.0);
-        let bar_y = sub_y + 28.0 + fall * 90.0;
-        let bar_alpha = title_in * fade;
-        self.rounded(cx - bar_w * 0.5, bar_y, bar_w, 6.0, 3.0,
-            color::with_alpha(theme.surface_bright, bar_alpha));
-        self.rounded(cx - bar_w * 0.5, bar_y,
-            (bar_w * loading_progress.clamp(0.0, 1.0).max(0.05)).clamp(6.0, bar_w), 6.0, 3.0,
-            color::with_alpha(theme.accent, bar_alpha));
-        let message = if status_text.trim().is_empty() { "Tap to skip" } else { status_text };
-        let message = self.fit_text(Face::Regular, 11.0, message, (w - 48.0).max(120.0));
-        self.volt_intro_letters(Face::Regular, 11.0, cx, sub_y + 40.0,
-            theme.text_muted, &message, elapsed, title_in * 0.88);
-    }
-
     /// Renders a clean, modern, minimal animated Horizon intro screen centered on the
     /// procedural Horizon `H` logo with real initialization progress and smooth cross-dissolve.
     pub fn draw_horizon_intro(&mut self, elapsed: f32, loading_progress: f32, status_text: &str) {
@@ -4637,32 +4532,6 @@ mod tests {
             assert_eq!((a.x, a.y, a.width, a.height), (b.x, b.y, b.width, b.height));
             assert_eq!(a.rgba, b.rgba);
         }
-        reset_atlas();
-    }
-
-    #[test]
-    fn volt_intro_letters_drop_and_fade_within_five_seconds() {
-        assert_eq!(VOLT_INTRO_SECONDS, 5.0);
-        assert_eq!(volt_intro_fall(3.0, 0.0), (0.0, 1.0));
-        let (early_drop, early_alpha) = volt_intro_fall(4.4, 0.0);
-        let (late_drop, late_alpha) = volt_intro_fall(4.4, 1.0);
-        assert!(early_drop > late_drop && early_alpha < late_alpha);
-        assert_eq!(volt_intro_fall(5.0, 0.0), (1.0, 0.0));
-        assert_eq!(volt_intro_fall(5.0, 1.0), (1.0, 0.0));
-    }
-
-    #[test]
-    fn volt_intro_uses_the_app_icon_in_its_own_atlas_slot() {
-        let (w, h, rgba) = crate::hud::decode_bytes(include_bytes!("../../../packaging/android/res/drawable-nodpi/launcher_icon.png")).unwrap();
-        assert_eq!((w, h), (512, 512));
-        let atlas = HudAtlas::build(Path::new("/nonexistent/horizon-test-assets")).unwrap();
-        reset_atlas();
-        with_cache(&atlas, |cache| {
-            assert!(cache.volt_intro_logo(&atlas, w, h, &rgba).is_some());
-            assert_eq!(cache.pending.len(), 1);
-            assert!(cache.volt_intro_logo(&atlas, w, h, &rgba).is_some());
-            assert_eq!(cache.pending.len(), 1);
-        });
         reset_atlas();
     }
 
