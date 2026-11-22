@@ -27,8 +27,8 @@ class DownloadUpdatesTests(unittest.TestCase):
         self.assertIn('Some(Action::OpenRoadGame)', pages)
         self.assertIn('Some(Action::CloseRoadGame)', pages)
         self.assertIn('self.auto_launch_after_install = false;', pages)
-        self.assertIn('std::mem::take(&mut self.auto_launch_after_install)', launcher)
-        self.assertIn('!self.install_cancelled.load', launcher)
+        self.assertIn('if self.auto_launch_after_install', launcher)
+        self.assertIn('&& self.session_worker.is_none()', launcher)
         self.assertIn('self.action(events)', launcher)
         self.assertIn('if let Err(error) = result', launcher)
 

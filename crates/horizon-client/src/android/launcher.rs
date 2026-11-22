@@ -963,11 +963,10 @@ impl ApplicationHandler for Launcher {
                 } else {
                     self.fail(error);
                 }
-            } else if std::mem::take(&mut self.auto_launch_after_install)
-                && !self.install_cancelled.load(std::sync::atomic::Ordering::Relaxed)
-            {
+            } else if self.auto_launch_after_install {
+                // Keep the request pending while account pre-warming or another
+                // modal blocks launching; do not silently drop the handoff.
                 self.road_game = None;
-                if let Err(error) = self.action(events) { self.fail(error); }
             }
         }
         if let Some(tc) = &mut self.control_editor
@@ -1069,6 +1068,18 @@ impl ApplicationHandler for Launcher {
                     }
                 }
             }
+        }
+
+        if self.auto_launch_after_install
+            && self.worker.is_none()
+            && self.session_worker.is_none()
+            && !self.exit_confirmation
+            && self.chooser.is_none()
+            && !self.login.pending()
+            && !self.launch_pending_tick
+        {
+            self.auto_launch_after_install = false;
+            if let Err(error) = self.action(events) { self.fail(error); }
         }
 
         if self.launch_pending_tick {
