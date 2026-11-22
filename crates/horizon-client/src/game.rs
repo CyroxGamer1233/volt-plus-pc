@@ -17598,7 +17598,9 @@ impl Game<'_> {
                             } else {
                                 self.options_bind_mouse(button)?;
                             }
-                        } else if left && self.options_picker_over_panel() {
+                        } else if left && self.ui.options.picker_armed() {
+                            // Only a release that follows a press on the open picker
+                            // binds; the click that opened it must not pick a cell.
                             self.options_picker_click()?;
                         } else if pressed {
                             self.options_bind_mouse(button)?;

@@ -536,11 +536,11 @@ impl Game<'_> {
         if self.screen == Screen::Options && self.options_waiting_for_key() {
             // The virtual mouse drives the picker: a tap on its plate picks the
             // key under the pointer, a press anywhere else binds the button.
-            if self.options_picker_over_panel() {
-                if down {
-                    self.options_picker_press();
-                    return Ok(());
-                }
+            if down && self.options_picker_over_panel() {
+                self.options_picker_press();
+                return Ok(());
+            }
+            if !down && self.ui.options.picker_armed() {
                 return self.options_picker_click();
             }
             if down {

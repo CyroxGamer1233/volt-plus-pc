@@ -1716,6 +1716,9 @@ pub struct OptionsUi {
     /// The cell of the touch key picker held down, as an index into the page's
     /// keys: the picker draws it pressed until the finger lifts.
     touch_key_pressed: Option<usize>,
+    /// Whether the picker has seen the press of the gesture that is now ending.
+    /// The tap that opens the picker must not bind the cell it opened over.
+    touch_key_armed: bool,
     /// The native mod's key waiting: (mod, key) in `mods.installed`.
     selected_native_key: Option<(usize, usize)>,
     /// Controller Binds: the action waiting for a pad button.
@@ -1788,6 +1791,7 @@ impl Default for OptionsUi {
             selected_key: None,
             touch_key_page: 0,
             touch_key_pressed: None,
+            touch_key_armed: false,
             selected_native_key: None,
             selected_pad_action: None,
             pad_style: GlyphStyle::Xbox,
@@ -4148,12 +4152,18 @@ impl OptionsUi {
         }
         let pressed = self.touch_picker_key_at(size, x, y);
         self.touch_key_pressed = pressed;
+        self.touch_key_armed = true;
         pressed.is_some()
     }
     /// The finger left the screen or the press was cancelled: drop the held cell
     /// without binding it.
     pub fn touch_key_picker_cancel(&mut self) {
         self.touch_key_pressed = None;
+        self.touch_key_armed = false;
+    }
+    /// Whether a press on the open picker is waiting for its release.
+    pub fn picker_armed(&self) -> bool {
+        self.touch_key_armed
     }
     /// Whether `(x, y)` is over the picker's plate, grid or its buttons: the
     /// virtual mouse clicks these instead of binding its own button.
@@ -4170,6 +4180,12 @@ impl OptionsUi {
     pub fn touch_key_picker(&mut self, s: &mut Settings, size: (f32, f32), x: f32, y: f32) -> Vec<Event> {
         self.touch_key_pressed = None;
         if self.selected_key.is_none() { return Vec::new(); }
+        // Only a release that follows a press on the open picker may bind: the tap
+        // that opened it would otherwise pick whatever cell it happened to be over.
+        if !self.touch_key_armed {
+            return Vec::new();
+        }
+        self.touch_key_armed = false;
         let (left, top, width, row_h) = Self::touch_picker_geometry(size);
         let keys = keybinds::available_keys();
         let pages = keys.len().div_ceil(32);
