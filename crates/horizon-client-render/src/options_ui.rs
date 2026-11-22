@@ -6819,7 +6819,7 @@ fn card_box(w: f32, h: f32) -> CardBox {
 fn card_row_rect(page: Page, card: &CardBox, wd: &Widget) -> [f32; 4] {
     match page {
         Page::Mods => [card.content[0], wd.y - 10.0, card.content[2], 32.0],
-        _ => [card.content[0], wd.y - 4.0, card.content[2], 22.0],
+        _ => [card.content[0], wd.y - 4.0, card.content[2], 24.0],
     }
 }
 
@@ -7030,14 +7030,14 @@ impl OptionsUi {
                 }
                 Row::Big(opt) => {
                     out.push(Self::card_option(s, opt, y, right, control_w, value_w));
-                    y += 22.0;
+                    y += 24.0;
                 }
                 Row::Pair(a, b) => {
                     out.push(Self::card_option(s, a, y, right, control_w, value_w));
-                    y += 22.0;
+                    y += 24.0;
                     if let Some(b) = b {
                         out.push(Self::card_option(s, b, y, right, control_w, value_w));
-                        y += 22.0;
+                        y += 24.0;
                     }
                 }
                 Row::Buttons(toggle, settings) => {
@@ -7178,19 +7178,25 @@ impl OptionsUi {
             // The group the list is scrolled into, as the mockup's tab rail.
             let mut lit = 0;
             for (i, at) in self.card_rail.iter().enumerate() {
-                if *at > 0.0 && top - *at > 0.0 {
+                if top - *at > 0.0 {
                     lit = i;
                 }
             }
             let mut y = card.rail[1] + 6.0;
-            for (i, name) in ["DISPLAY", "QUALITY", "PERFORMANCE"].iter().enumerate() {
+            let names = [
+                crate::lang::get("options.video.display.header"),
+                crate::lang::get("options.video.quality.header"),
+                crate::lang::get("options.video.preferences.header"),
+            ];
+            for (i, name) in names.iter().enumerate() {
                 let rect = [card.rail[0] + 2.0, y, card.rail[2] - 4.0, 16.0];
                 if i == lit {
                     volt_border(batch, atlas, rect[0], rect[1], rect[2], rect[3], 3.0, CARD_TEXT);
                 }
+                let shown = volt_fit(atlas, name, rect[2] - 12.0);
                 batch.text_styled(
                     atlas,
-                    &Text::literal(*name),
+                    &Text::literal(shown),
                     rect[0] + 6.0,
                     rect[1] + 4.0,
                     if i == lit { CARD_TEXT } else { CARD_MUTED },
@@ -7199,7 +7205,11 @@ impl OptionsUi {
                 y += 18.0;
             }
         }
-        // The description box, under the rows.
+        // The description box, under the rows (the Mods page keeps that room
+        // for its folder button).
+        if page == Page::Mods {
+            return;
+        }
         volt_rounded(
             batch,
             atlas,
@@ -7210,10 +7220,7 @@ impl OptionsUi {
             4.0,
             rgb(0x0e0d14, 235),
         );
-        let line = match page {
-            Page::Mods => "Turn a mod on or off. Changes apply when the world loads.".to_owned(),
-            _ => "Changes how the world is drawn. Higher settings cost frames.".to_owned(),
-        };
+        let line = "Changes how the world is drawn. Higher settings cost frames.";
         let lines = atlas.font.split(&Text::literal(line), (card.footer[2] - 96.0).max(20.0));
         let _ = s;
         for (i, text) in lines.iter().take(2).enumerate() {
