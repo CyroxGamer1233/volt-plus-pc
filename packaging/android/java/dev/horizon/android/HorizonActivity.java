@@ -35,6 +35,38 @@ public final class HorizonActivity extends android.app.NativeActivity {
     public void releaseWallpaperFrame() { WallpaperPlayer.get().releaseFrame(); }
     public String wallpaperStatus() { return WallpaperPlayer.get().status(); }
 
+    // Optional experimental editor module. Default builds deliberately omit it.
+    public boolean hasZalithStudio() {
+        try {
+            Class.forName("dev.horizon.android.control.ZalithStudioActivity", false, getClassLoader());
+            return true;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    public boolean openZalithStudio(final String layoutPath) {
+        if (layoutPath == null || !hasZalithStudio()) return false;
+        try {
+            final Class<?> studio = Class.forName("dev.horizon.android.control.ZalithStudioActivity", false, getClassLoader());
+            final android.content.Intent intent = new android.content.Intent(this, studio);
+            intent.putExtra("layout_path", layoutPath);
+            runOnUiThread(new Runnable() {
+                @Override public void run() {
+                    try { startActivity(intent); }
+                    catch (Throwable error) {
+                        android.util.Log.e("VoltJavaControls", "Could not start experimental studio", error);
+                        android.widget.Toast.makeText(HorizonActivity.this, "Could not open Java Control Studio", android.widget.Toast.LENGTH_LONG).show();
+                    }
+                }
+            });
+            return true;
+        } catch (Throwable error) {
+            android.util.Log.w("VoltJavaControls", "Experimental studio unavailable", error);
+            return false;
+        }
+    }
+
     @Override protected void onPause() {
         WallpaperPlayer.get().stop();
         super.onPause();

@@ -865,6 +865,27 @@ pub fn refresh_bounds() {
     }
 }
 
+/// Whether the optional experimental control editor was included in this APK.
+pub fn zalith_studio_available() -> bool {
+    let Some(ui) = UI.get() else { return false; };
+    let Ok(mut env) = ui.vm.attach_current_thread() else { return false; };
+    match env.call_method(&ui.activity, "hasZalithStudio", "()Z", &[]).and_then(|v| v.z()) {
+        Ok(value) => value,
+        Err(_) => { let _ = env.exception_clear(); false }
+    }
+}
+
+/// The Android activity checks the layout path is private and of the right type.
+pub fn open_zalith_studio(path: &std::path::Path) -> bool {
+    let Some(ui) = UI.get() else { return false; };
+    let Ok(mut env) = ui.vm.attach_current_thread() else { return false; };
+    let result = env.with_local_frame(8, |env| -> jni::errors::Result<bool> {
+        let path = JObject::from(env.new_string(path.to_string_lossy().as_ref())?);
+        env.call_method(&ui.activity, "openZalithStudio", "(Ljava/lang/String;)Z", &[JValue::Object(&path)])?.z()
+    });
+    match result { Ok(value) => value, Err(_) => { let _ = env.exception_clear(); false } }
+}
+
 /// Start or stop the wallpaper decoder; it performs GL/media work on its own looper.
 pub fn wallpaper_start(path: &std::path::Path, source: [u32; 2], output: [u32; 2]) -> Result<(), String> {
     let ui = UI.get().ok_or("Android activity is not ready")?;

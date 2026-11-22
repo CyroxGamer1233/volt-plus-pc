@@ -403,6 +403,7 @@ pub(super) enum Action {
     SaveControlProfileAsNew,
     ExportControlProfile,
     ImportControlProfile,
+    OpenExperimentalZalithStudio,
     MouseSensDelta(f32),
     TouchSensDelta(f32),
     VirtualMouseSpeedDelta(f32),
@@ -5528,7 +5529,8 @@ impl Launcher {
             }
             SettingsCategory::Controls => {
                 let studio_offset = 196.0;
-                let count = 26;
+                let zalith_studio_available = crate::native_ime::zalith_studio_available();
+                let count = 26 + usize::from(zalith_studio_available);
                 let max_scroll =
                     (studio_offset + count as f32 * step_y - (list_bottom - list_top)).max(0.0);
                 self.catalog.scroll = self.catalog.scroll.clamp(0.0, max_scroll);
@@ -5613,7 +5615,7 @@ impl Launcher {
                 let invert_y_active = opts.invert_y || touch_cfg.invert_y;
                 let sprint_latch_active = opts.toggle_sprint || touch_cfg.sprint_toggle;
 
-                let rows: [(&str, &str, SettingControl<'_>); 26] = [
+                let mut rows: Vec<(&str, &str, SettingControl<'_>)> = vec![
                     (
                         "LAYOUT STUDIO, IMPORT & EXPORT PRESETS",
                         "Material 3 HUD editor, automatic MCPE/GoyControl file importer & location picker export",
@@ -5804,6 +5806,14 @@ impl Launcher {
                         },
                     ),
                 ];
+
+                if zalith_studio_available {
+                    rows.insert(4, (
+                        "Zalith Control Studio (Experimental)",
+                        "Edits the latest saved Zalith layout; gameplay integration is not available yet",
+                        SettingControl::Button("Open Studio", Action::OpenExperimentalZalithStudio, false),
+                    ));
+                }
 
                 ui.set_clip(Some([
                     content_x - 2.0,
@@ -6754,6 +6764,22 @@ impl Launcher {
                         self.catalog.status = err;
                     }
                 }
+            }
+            Some(Action::OpenExperimentalZalithStudio) => {
+                let game_home = self.catalog.config.game_home(&self.home);
+                let dir = game_home.join("controls/java/zalith");
+                let latest = std::fs::read_dir(dir).ok().into_iter().flatten()
+                    .filter_map(std::result::Result::ok)
+                    .filter(|entry| entry.file_type().is_ok_and(|t| t.is_file())
+                        && entry.path().extension().is_some_and(|ext| ext == "json"))
+                    .max_by_key(|entry| (entry.metadata().ok().and_then(|m| m.modified().ok()), entry.path()))
+                    .map(|entry| entry.path());
+                self.catalog.status = match latest {
+                    Some(path) if crate::native_ime::open_zalith_studio(&path) =>
+                        "Opening experimental Zalith Studio. Saved layouts are not usable in gameplay yet.".into(),
+                    Some(_) => "Could not open the experimental Zalith Studio.".into(),
+                    None => "Import a Zalith JSON layout first.".into(),
+                };
             }
             Some(Action::MouseSensDelta(delta)) => {
                 self.modify_game_settings(|s| {
