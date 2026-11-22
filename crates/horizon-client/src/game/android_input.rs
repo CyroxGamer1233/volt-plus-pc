@@ -534,6 +534,15 @@ impl Game<'_> {
 
     fn android_custom_mouse(&mut self, button: MouseButton, down: bool) -> Result<()> {
         if self.screen == Screen::Options && self.options_waiting_for_key() {
+            // The virtual mouse drives the picker: a tap on its plate picks the
+            // key under the pointer, a press anywhere else binds the button.
+            if self.options_picker_over_panel() {
+                if down {
+                    self.options_picker_press();
+                    return Ok(());
+                }
+                return self.options_picker_click();
+            }
             if down {
                 return self.options_bind_mouse(button);
             }
@@ -1010,6 +1019,41 @@ impl Game<'_> {
                 InGameMenuAction::SendCustomInput(token) => {
                     self.android_sync_pointer();
                     self.android_custom_token_tap(&token);
+                }
+                InGameMenuAction::SetRecorderResolution(index) => {
+                    let index = usize::from(index).min(horizon_client::recorder::RESOLUTIONS.len() - 1);
+                    horizon_client::recorder::update_settings(|s| s.resolution = index);
+                }
+                InGameMenuAction::SetRecorderFps(index) => {
+                    let index = usize::from(index).min(horizon_client::recorder::FRAME_RATES.len() - 1);
+                    horizon_client::recorder::update_settings(|s| s.fps = index);
+                }
+                InGameMenuAction::SetRecorderAudio(index) => {
+                    let index = usize::from(index).min(horizon_client::recorder::AUDIO.len() - 1);
+                    horizon_client::recorder::update_settings(|s| s.audio = index);
+                    let status = horizon_client::recorder::status();
+                    if index == 2 && status.capability.checked && !status.capability.game_audio {
+                        // The choice is kept, but say plainly that it cannot run here.
+                        let mut status = status;
+                        status.phase = horizon_client::recorder::Phase::Unsupported;
+                        status.message =
+                            "in-game audio needs Android 10 or newer; use microphone or none"
+                                .to_owned();
+                        horizon_client::recorder::publish(status);
+                    }
+                }
+                InGameMenuAction::ToggleRecorderOverlay => {
+                    horizon_client::recorder::update_settings(|s| s.hide_overlay = !s.hide_overlay);
+                }
+                InGameMenuAction::RecorderStart => crate::screen_record::start(),
+                InGameMenuAction::RecorderStop => crate::screen_record::stop(),
+                InGameMenuAction::RecorderPlay(uri) => {
+                    let note = crate::screen_record::play(&uri);
+                    let mut status = horizon_client::recorder::status();
+                    if !note.is_empty() {
+                        status.message = note;
+                    }
+                    horizon_client::recorder::publish(status);
                 }
             }
             return Ok(true);

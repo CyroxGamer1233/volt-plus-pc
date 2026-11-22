@@ -353,6 +353,52 @@ pub const DARK: Palette = Palette {
     dark: true,
 };
 
+/// Volt Plus's warm browns: the in-game Control Hub, the screen recorder's
+/// overlay, Video Settings and the mod menus all draw from these, so the game's
+/// own chrome matches the launcher dashboard's thin copper accents instead of
+/// the violet design system. Not part of [`css`]: this is game chrome only.
+///
+/// The browns are a warm espresso ramp with one copper accent, kept dark so
+/// world colour still reads through the translucent plates.
+pub mod warm {
+    /// The window behind everything.
+    pub const PAGE: u32 = 0x14100d;
+    /// Behind the page, for scrims and shadows.
+    pub const DEEP: u32 = 0x0d0a08;
+    /// Panels and rows.
+    pub const SURFACE: u32 = 0x1e1712;
+    /// A panel sunk below [`SURFACE`] (sidebars, the seat of the hub).
+    pub const SURFACE_DIM: u32 = 0x191310;
+    /// A panel lifted above [`SURFACE`] (headers, hovered rows).
+    pub const SURFACE_BRIGHT: u32 = 0x2a201a;
+    /// A selected row, the open tab.
+    pub const SELECTED: u32 = 0x3a2a1e;
+    /// Cards on a panel.
+    pub const CARD: u32 = 0x241c16;
+    /// One-pixel rules, panel outlines.
+    pub const BORDER: u32 = 0x3a2c21;
+    /// The outline of a focused or selected plate.
+    pub const BORDER_STRONG: u32 = 0x58402e;
+    /// The copper accent: rules, active tabs, slider fills, focus rings.
+    pub const ACCENT: u32 = 0xc98b57;
+    /// The accent's bright edge, for text on dark plates.
+    pub const ACCENT_HI: u32 = 0xe7b183;
+    /// The accent in shadow, for gradients and pressed fills.
+    pub const ACCENT_DEEP: u32 = 0x8c5a33;
+    /// Text and icons on [`ACCENT`].
+    pub const ON_ACCENT: u32 = 0x190f08;
+    /// Primary text on the browns.
+    pub const TEXT: u32 = 0xf2e6d8;
+    /// Secondary text, captions, values that are not edited.
+    pub const TEXT_MUTED: u32 = 0xb7a08c;
+    /// Recording, destructive actions, errors.
+    pub const DANGER: u32 = 0xe07462;
+    /// Saved, supported, on.
+    pub const SUCCESS: u32 = 0x86c79a;
+    /// A hairline between groups of rows, thinner than a panel outline.
+    pub const RULE: u32 = 0x2e231b;
+}
+
 /// The launcher's and the website's blocky look ("Blocks" in `docs/design-system.md`): stone-dark
 /// (or lavender-light) neutrals with a violet cast, panels with a dark outline, a light bevel on top
 /// and a darker lip below, and the violet `face` of the one big action. The game's menus keep

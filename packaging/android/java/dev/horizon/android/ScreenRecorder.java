@@ -1,0 +1,309 @@
+package dev.horizon.android;
+
+/**
+ * Screen recording for the in-game overlay: the consent prompt, the capture service's
+ * state, and the recordings the player can play back.
+ *
+ * <p>Everything here is static and lives in the app's own process; the Rust client calls it
+ * through JNI ({@code crates/horizon-client/src/android/recorder.rs}) and polls
+ * {@link #status()} for progress. The heavy lifting is in {@link RecorderService}.
+ */
+public final class ScreenRecorder {
+    /** The request code of the system's screen-capture consent prompt. */
+    public static final int REQUEST_CONSENT = 4210;
+    /** The request code of the microphone permission prompt. */
+    public static final int REQUEST_MIC = 4211;
+
+    /** Where a finished recording lands (under Movies, so any gallery app sees it). */
+    static final String FOLDER = "Movies/VoltPlus";
+
+    static volatile String state = "idle";
+    static volatile String message = "";
+    static volatile String uri = "";
+    static volatile long startedAt = 0L;
+    static volatile long bytes = 0L;
+    /** The size and rate the encoder actually runs at, 0 until recording starts. */
+    static volatile int runWidth = 0;
+    static volatile int runHeight = 0;
+    static volatile int runFps = 0;
+    static volatile int width = 1280;
+    static volatile int height = 720;
+    static volatile int fps = 30;
+    /** 0 no audio, 1 microphone, 2 the game's own audio. */
+    static volatile int audioMode = 0;
+
+    static volatile int consentResult = 0;
+    static volatile android.content.Intent consentData = null;
+
+    private ScreenRecorder() {}
+
+    /**
+     * {@code sdk;displayWidth;displayHeight;inGameAudio;microphone;projection;device}: the facts
+     * the overlay needs before it offers a combination.
+     */
+    public static String capabilities(android.content.Context context) {
+        if (context == null) {
+            return "0;0;0;0;0;0;unknown";
+        }
+        int sdk = android.os.Build.VERSION.SDK_INT;
+        android.util.DisplayMetrics metrics = context.getResources().getDisplayMetrics();
+        boolean inGameAudio = sdk >= 29;
+        boolean microphone =
+                context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
+                        == android.content.pm.PackageManager.PERMISSION_GRANTED;
+        boolean projection =
+                context.getSystemService(android.content.Context.MEDIA_PROJECTION_SERVICE) != null;
+        return sdk
+                + ";"
+                + metrics.widthPixels
+                + ";"
+                + metrics.heightPixels
+                + ";"
+                + (inGameAudio ? 1 : 0)
+                + ";"
+                + (microphone ? 1 : 0)
+                + ";"
+                + (projection ? 1 : 0)
+                + ";"
+                + android.os.Build.MANUFACTURER
+                + " "
+                + android.os.Build.MODEL;
+    }
+
+    /**
+     * Asks for screen capture at {@code w x h}, {@code f} frames a second. The size is a request:
+     * {@link RecorderService} fits it to the display and the device's encoder. Returns a
+     * {@code state;message} pair the overlay shows as is.
+     */
+    public static synchronized String start(
+            android.app.Activity activity, int w, int h, int f, int audio) {
+        if (activity == null) {
+            return "error;no window to record";
+        }
+        if (RecorderService.busy()) {
+            return "recording;already recording";
+        }
+        android.content.Context context = activity.getApplicationContext();
+        if (audio < 0 || audio > 2) {
+            audio = 0;
+        }
+        if (audio != 0
+                && context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
+                        != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            try {
+                activity.requestPermissions(
+                        new String[] {android.Manifest.permission.RECORD_AUDIO}, REQUEST_MIC);
+            } catch (Throwable ignored) {
+            }
+            return "permission;microphone access is off, allow it and start again";
+        }
+        if (audio == 2 && android.os.Build.VERSION.SDK_INT < 29) {
+            return "unsupported;in-game audio needs Android 10 or newer, choose microphone or none";
+        }
+        if (context.getSystemService(android.content.Context.MEDIA_PROJECTION_SERVICE) == null) {
+            return "unsupported;this device has no screen capture service";
+        }
+        width = w;
+        height = h;
+        fps = f;
+        audioMode = audio;
+        uri = "";
+        bytes = 0L;
+        startedAt = 0L;
+        message = "";
+        try {
+            android.media.projection.MediaProjectionManager manager =
+                    (android.media.projection.MediaProjectionManager)
+                            context.getSystemService(
+                                    android.content.Context.MEDIA_PROJECTION_SERVICE);
+            android.content.Intent intent = manager.createScreenCaptureIntent();
+            state = "asking";
+            activity.startActivityForResult(intent, REQUEST_CONSENT);
+            return "asking;confirm the screen capture prompt";
+        } catch (Throwable error) {
+            state = "error";
+            message = shorter(error);
+            return "error;" + message;
+        }
+    }
+
+    /** The system's answer to the consent prompt; the activity forwards it here. */
+    public static synchronized void onActivityResult(
+            android.app.Activity activity, int request, int result, android.content.Intent data) {
+        if (request != REQUEST_CONSENT) {
+            return;
+        }
+        if (result != android.app.Activity.RESULT_OK || data == null) {
+            state = "denied";
+            message = "screen capture was not allowed";
+            return;
+        }
+        consentResult = result;
+        consentData = data;
+        state = "starting";
+        message = "";
+        try {
+            android.content.Intent service =
+                    new android.content.Intent(activity, RecorderService.class);
+            if (android.os.Build.VERSION.SDK_INT >= 26) {
+                activity.startForegroundService(service);
+            } else {
+                activity.startService(service);
+            }
+        } catch (Throwable error) {
+            state = "error";
+            message = "could not start the recorder: " + shorter(error);
+        }
+    }
+
+    /** Ends the current recording; the service finalises the file first. */
+    public static synchronized String stop() {
+        if (!RecorderService.busy()) {
+            state = "idle";
+            return "idle;nothing is recording";
+        }
+        state = "stopping";
+        RecorderService.stopNow("saved");
+        return "stopping;finishing the file";
+    }
+
+    /** {@code state;millis;bytes;uri;width;height;fps;message}. */
+    public static String status() {
+        long millis = startedAt == 0L ? 0L : System.currentTimeMillis() - startedAt;
+        return state
+                + ";"
+                + millis
+                + ";"
+                + bytes
+                + ";"
+                + uri
+                + ";"
+                + runWidth
+                + ";"
+                + runHeight
+                + ";"
+                + runFps
+                + ";"
+                + message;
+    }
+
+    /**
+     * One recording per line, {@code name\tbytes\taddedMillis\turi}. On Android 10 and newer the
+     * list is MediaStore's {@code Movies/VoltPlus}; before that it is the app's own Movies folder
+     * (where playing back needs Android 10).
+     */
+    public static String recordings(android.content.Context context) {
+        StringBuilder out = new StringBuilder();
+        if (context == null) {
+            return "";
+        }
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            android.net.Uri collection =
+                    android.provider.MediaStore.Video.Media.getContentUri(
+                            android.provider.MediaStore.VOLUME_EXTERNAL);
+            String[] columns = {
+                android.provider.MediaStore.Video.Media._ID,
+                android.provider.MediaStore.Video.Media.DISPLAY_NAME,
+                android.provider.MediaStore.Video.Media.SIZE,
+                android.provider.MediaStore.Video.Media.DATE_ADDED,
+            };
+            String where =
+                    android.provider.MediaStore.Video.Media.RELATIVE_PATH + " LIKE ?";
+            String[] args = {"Movies/VoltPlus%"};
+            android.database.Cursor cursor = null;
+            try {
+                cursor =
+                        context.getContentResolver()
+                                .query(
+                                        collection,
+                                        columns,
+                                        where,
+                                        args,
+                                        android.provider.MediaStore.Video.Media.DATE_ADDED
+                                                + " DESC");
+                int seen = 0;
+                while (cursor != null && cursor.moveToNext() && seen < 40) {
+                    long id = cursor.getLong(0);
+                    String name = cursor.getString(1);
+                    long size = cursor.getLong(2);
+                    long added = cursor.getLong(3) * 1000L;
+                    android.net.Uri item =
+                            android.content.ContentUris.withAppendedId(collection, id);
+                    out.append(name)
+                            .append('\t')
+                            .append(size)
+                            .append('\t')
+                            .append(added)
+                            .append('\t')
+                            .append(item.toString())
+                            .append('\n');
+                    seen++;
+                }
+            } catch (Throwable ignored) {
+            } finally {
+                if (cursor != null) {
+                    try {
+                        cursor.close();
+                    } catch (Throwable ignored) {
+                    }
+                }
+            }
+            return out.toString();
+        }
+        java.io.File folder = RecorderService.legacyFolder(context);
+        java.io.File[] files = folder == null ? null : folder.listFiles();
+        if (files == null) {
+            return "";
+        }
+        java.util.Arrays.sort(files, new java.util.Comparator<java.io.File>() {
+            public int compare(java.io.File a, java.io.File b) {
+                return Long.compare(b.lastModified(), a.lastModified());
+            }
+        });
+        for (int i = 0; i < files.length && i < 40; i++) {
+            out.append(files[i].getName())
+                    .append('\t')
+                    .append(files[i].length())
+                    .append('\t')
+                    .append(files[i].lastModified())
+                    .append("\tfile:")
+                    .append(files[i].getAbsolutePath())
+                    .append('\n');
+        }
+        return out.toString();
+    }
+
+    /** Opens a recording in the system's video player. */
+    public static String play(android.app.Activity activity, String item) {
+        if (activity == null || item == null || item.isEmpty()) {
+            return "error;nothing to play";
+        }
+        try {
+            android.content.Intent view = new android.content.Intent(android.content.Intent.ACTION_VIEW);
+            view.setDataAndType(android.net.Uri.parse(item), "video/mp4");
+            view.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            activity.startActivity(view);
+            return "ok;";
+        } catch (Throwable error) {
+            return "error;no video player could open it (" + shorter(error) + ")";
+        }
+    }
+
+    static void publish(
+            String nextState, String nextUri, long sizeBytes, long startMillis, String note) {
+        state = nextState;
+        uri = nextUri == null ? "" : nextUri;
+        bytes = sizeBytes;
+        startedAt = startMillis;
+        message = note == null ? "" : note;
+    }
+
+    static String shorter(Throwable error) {
+        String text = error.getClass().getSimpleName();
+        String detail = error.getMessage();
+        if (detail != null && !detail.isEmpty()) {
+            text += ": " + detail;
+        }
+        return text.length() > 160 ? text.substring(0, 160) : text;
+    }
+}

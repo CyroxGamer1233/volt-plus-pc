@@ -15100,6 +15100,12 @@ impl Game<'_> {
                 crate::touch_visible(),
                 (self.frame_ticks / 20.0).clamp(0.0, 0.25),
             );
+            // The recorder's state is polled a few times a second, never per frame, and a
+            // raw recording hides the game's own HUD until it stops.
+            crate::screen_record::refresh(self.pad.touch_ui.floating_menu);
+            if let Some(hidden) = horizon_client::recorder::sync_controls(self.ui.hide_gui) {
+                self.ui.hide_gui = hidden;
+            }
         }
         #[cfg(target_os = "android")]
         if self.pad.touch.editor.is_some() {
@@ -15128,7 +15134,8 @@ impl Game<'_> {
             let in_menu = self.pad_in_menu();
             let waiting_for_key = self.screen == Screen::Options && self.options_waiting_for_key();
             let hud_in_menu = in_menu && !waiting_for_key;
-            self.pad.touch.in_menu = hud_in_menu;
+            // The key picker keeps menu mode on so the virtual mouse still moves.
+            self.pad.touch.in_menu = in_menu;
             self.pad.touch.in_inventory =
                 matches!(self.screen, Screen::Inventory | Screen::Creative);
             self.pad.touch.goy_rendered_by_ui = true;
@@ -16659,11 +16666,32 @@ impl Game<'_> {
             };
             self.pad.touch.viewport(size.width, size.height);
             if self.screen == Screen::Options && self.options_waiting_for_key() {
-                if touch.phase == TouchPhase::Ended {
-                    let b = HudBatch::new([size.width, size.height]);
-                    let events = self.ui.options.touch_key_picker(&mut self.settings,
-                        (b.width, b.height), touch.location.x as f32 / b.scale, touch.location.y as f32 / b.scale);
-                    if let Err(error) = self.handle_option_events(events) { log::warn!("Key picker: {error}"); }
+                let b = HudBatch::new([size.width, size.height]);
+                let at = [
+                    touch.location.x as f32 / b.scale,
+                    touch.location.y as f32 / b.scale,
+                ];
+                match touch.phase {
+                    // Show the cell pressed while the finger is down …
+                    TouchPhase::Started => {
+                        self.ui
+                            .options
+                            .touch_key_picker_press((b.width, b.height), at[0], at[1]);
+                    }
+                    // … and bind it when the finger lifts on the same plate.
+                    TouchPhase::Ended => {
+                        let events =
+                            self.ui
+                                .options
+                                .touch_key_picker(&mut self.settings, (b.width, b.height), at[0], at[1]);
+                        if let Err(error) = self.handle_option_events(events) {
+                            log::warn!("Key picker: {error}");
+                        }
+                    }
+                    TouchPhase::Cancelled => {
+                        self.ui.options.touch_key_picker_cancel();
+                    }
+                    TouchPhase::Moved => {}
                 }
                 return;
             }
@@ -16708,8 +16736,9 @@ impl Game<'_> {
                 touch.location.y as f32 / size.height.max(1) as f32,
             ];
             let in_menu = self.pad_in_menu();
-            let waiting_for_key = self.screen == Screen::Options && self.options_waiting_for_key();
-            self.pad.touch.in_menu = in_menu && !waiting_for_key;
+            // The key picker keeps menu mode on: the virtual mouse has to keep
+            // moving over it, or a touchscreen cannot reach the grid at all.
+            self.pad.touch.in_menu = in_menu;
             self.pad.touch.in_inventory =
                 matches!(self.screen, Screen::Inventory | Screen::Creative);
             let touch_controls_hidden = !crate::touch_visible()
@@ -17557,8 +17586,23 @@ impl Game<'_> {
                     }
                 }
                 WindowEvent::MouseInput { state, button, .. } if self.screen == Screen::Options => {
-                    if self.options_waiting_for_key() && state == ElementState::Pressed {
-                        self.options_bind_mouse(button)?;
+                    if self.options_waiting_for_key() {
+                        // The picker answers the virtual mouse: on its plate a
+                        // click picks a key, anywhere else a press binds the
+                        // button itself, as vanilla's Key Binds does.
+                        let pressed = state == ElementState::Pressed;
+                        let left = button == MouseButton::Left;
+                        if left && pressed {
+                            if self.options_picker_over_panel() {
+                                self.options_picker_press();
+                            } else {
+                                self.options_bind_mouse(button)?;
+                            }
+                        } else if left && self.options_picker_over_panel() {
+                            self.options_picker_click()?;
+                        } else if pressed {
+                            self.options_bind_mouse(button)?;
+                        }
                     } else if matches!(button, MouseButton::Left | MouseButton::Right) {
                         self.options_mouse(
                             state == ElementState::Pressed,

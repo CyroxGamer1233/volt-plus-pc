@@ -2,7 +2,9 @@
 use crate::{
     hud::{HudAtlas, HudBatch, rgba},
     osk::{Keyboard, Output},
+    recorder::{self, Phase},
 };
+use horizon_theme::warm;
 use std::{
     cell::Cell,
     collections::BTreeMap,
@@ -169,6 +171,16 @@ pub enum InGameMenuAction {
     SetResolutionScale(u32),
     /// Toggle in-game animations (animated textures, view bobbing, chunk fade, UI transitions).
     ToggleGameAnimations,
+    /// Screen recorder: the resolution, frame rate, audio source and the controls toggle.
+    SetRecorderResolution(u8),
+    SetRecorderFps(u8),
+    SetRecorderAudio(u8),
+    ToggleRecorderOverlay,
+    /// Ask Android for the screen-capture prompt, or end the recording that is running.
+    RecorderStart,
+    RecorderStop,
+    /// Open a finished recording in the system's video player.
+    RecorderPlay(String),
     /// Send a custom keyboard key, mouse button/scroll, or gameplay action token immediately.
     SendCustomInput(String),
 }
@@ -1663,6 +1675,64 @@ fn draw_mcpe_custom_plate(
     );
 }
 
+/// A label cut to `max` characters with an ellipsis: the hub draws with a fixed width and
+/// has no measuring pass of its own.
+fn ellipsis(text: &str, max: usize) -> String {
+    let max = max.max(4);
+    if text.chars().count() <= max {
+        return text.to_owned();
+    }
+    let mut cut: String = text.chars().take(max - 1).collect();
+    cut.push('…');
+    cut
+}
+
+/// The Record tab's cells: the same rectangles are drawn and hit-tested, so a chip cannot
+/// drift away from the place a finger finds it.
+struct RecordCells {
+    start: [f32; 4],
+    resolution: [[f32; 4]; 6],
+    fps: [[f32; 4]; 6],
+    audio: [[f32; 4]; 3],
+    overlay: [f32; 4],
+    recordings: [[f32; 4]; 3],
+}
+
+fn record_cells(cx: f32, cw: f32, body_y: f32) -> RecordCells {
+    let gap = 6.0;
+    let chip_w = (cw - gap * 2.0) / 3.0;
+    let chip_h = 26.0;
+    let mut resolution = [[0.0f32; 4]; 6];
+    let mut fps = [[0.0f32; 4]; 6];
+    for i in 0..6 {
+        let x = cx + (i % 3) as f32 * (chip_w + gap);
+        let row = (i / 3) as f32 * (chip_h + 6.0);
+        resolution[i] = [x, body_y + 80.0 + row, chip_w, chip_h];
+        fps[i] = [x, body_y + 162.0 + row, chip_w, chip_h];
+    }
+    let mut audio = [[0.0f32; 4]; 3];
+    for (i, cell) in audio.iter_mut().enumerate() {
+        *cell = [
+            cx + i as f32 * (chip_w + gap),
+            body_y + 244.0,
+            chip_w,
+            chip_h,
+        ];
+    }
+    let mut recordings = [[0.0f32; 4]; 3];
+    for (i, cell) in recordings.iter_mut().enumerate() {
+        *cell = [cx, body_y + 354.0 + i as f32 * 40.0, cw, 36.0];
+    }
+    RecordCells {
+        start: [cx + cw - 100.0, body_y + 24.0, 88.0, 32.0],
+        resolution,
+        fps,
+        audio,
+        overlay: [cx, body_y + 282.0, cw, 46.0],
+        recordings,
+    }
+}
+
 fn hub_metrics(w: f32, h: f32) -> (f32, f32, f32, f32, f32, f32, f32, f32, f32) {
     let dw = (w - 16.0).clamp(352.0, 610.0);
     let dh = (h - 12.0).clamp(264.0, 420.0);
@@ -2279,11 +2349,12 @@ impl TouchUi {
                 return Some(InGameMenuAction::Close);
             }
 
-            // Left Sidebar Category Tabs (Recommended, Controls, Aiming, Buttons, Advanced)
-            let tab_start_y = dy + 54.0;
-            for ti in 0..5u8 {
-                let ty = tab_start_y + ti as f32 * 39.0;
-                if inside([dx + 10.0, ty, side_w - 16.0, 35.0]) {
+            // Left Sidebar Category Tabs (Recommended, Controls, Aiming, Buttons,
+            // Advanced, Record)
+            let tab_start_y = dy + 52.0;
+            for ti in 0..6u8 {
+                let ty = tab_start_y + ti as f32 * 34.0;
+                if inside([dx + 10.0, ty, side_w - 16.0, 30.0]) {
                     if self.hub_tab != ti {
                         self.hub_tab = ti;
                         self.hub_scroll = 0.0;
@@ -2584,8 +2655,8 @@ impl TouchUi {
                     return Some(InGameMenuAction::ToggleInventoryControls);
                 }
             }
-            _ => {
-                // Tab 3: Advanced & Quick Actions
+            4 => {
+                // Tab 4: Advanced & Quick Actions
                 let row_h = 46.0;
                 let step = 54.0;
                 if inside([cx, body_y + 18.0, cw, row_h]) {
@@ -2634,6 +2705,44 @@ impl TouchUi {
                     return Some(InGameMenuAction::OpenLogs);
                 }
             }
+            _ => {
+                // Tab 5: Record — resolution, frame rate, audio, controls and the list.
+                let cells = record_cells(cx, cw, body_y);
+                if inside(cells.start) {
+                    return Some(if recorder::status().phase.startable() {
+                        InGameMenuAction::RecorderStart
+                    } else {
+                        InGameMenuAction::RecorderStop
+                    });
+                }
+                for (i, cell) in cells.resolution.into_iter().enumerate() {
+                    if inside(cell) {
+                        return Some(InGameMenuAction::SetRecorderResolution(i as u8));
+                    }
+                }
+                for (i, cell) in cells.fps.into_iter().enumerate() {
+                    if inside(cell) {
+                        return Some(InGameMenuAction::SetRecorderFps(i as u8));
+                    }
+                }
+                for (i, cell) in cells.audio.into_iter().enumerate() {
+                    if inside(cell) {
+                        return Some(InGameMenuAction::SetRecorderAudio(i as u8));
+                    }
+                }
+                if inside(cells.overlay) {
+                    return Some(InGameMenuAction::ToggleRecorderOverlay);
+                }
+                let recordings = recorder::status().recordings;
+                for (i, cell) in cells.recordings.into_iter().enumerate() {
+                    if inside(cell)
+                        && let Some(item) = recordings.get(i)
+                    {
+                        self.floating_menu = false;
+                        return Some(InGameMenuAction::RecorderPlay(item.uri.clone()));
+                    }
+                }
+            }
         }
 
         Some(InGameMenuAction::Close)
@@ -2657,23 +2766,28 @@ impl TouchUi {
         let mut ui = Ui::mobile(a, b, (0.0, 0.0));
         let (w, h) = (ui.w, ui.h);
         let (open_t, tab_t) = self.step_animations();
-        let open_ease = 1.0 - (1.0 - open_t).powi(3);
-        let tab_ease = 1.0 - (1.0 - tab_t).powi(3);
+        let open_ease = crate::ui_theme::motion::spring_expressive_default(open_t);
+        let tab_ease = crate::ui_theme::motion::spring_expressive_default(tab_t);
 
-        let theme = crate::ui_theme::active_theme();
-        let surface_bg = theme.bg_solid;
-        let sidebar_bg = theme.sidebar_bg;
-        let card_bg = theme.surface;
-        let card_sel = theme.surface_selected;
-        let border_c = theme.border;
-        let accent = theme.accent;
-        let accent_hi = theme.accent;
-        let accent_fg = theme.accent_text;
-        let text_c = theme.text_primary;
-        let muted_c = theme.text_muted;
-        let danger_c = theme.danger;
+        // The hub wears Volt Plus's own warm browns, the same thin copper accents as the
+        // launcher dashboard, instead of the launcher's selected theme: the overlay has to
+        // read over any world and stay one design with the menus and the recorder.
+        let hex = color::hex;
+        let surface_bg = hex(warm::PAGE, 250);
+        let sidebar_bg = hex(warm::SURFACE_DIM, 246);
+        let card_bg = hex(warm::CARD, 240);
+        let card_sel = hex(warm::SELECTED, 252);
+        let border_c = hex(warm::BORDER, 255);
+        let accent = hex(warm::ACCENT, 255);
+        let accent_hi = hex(warm::ACCENT_HI, 255);
+        let accent_fg = hex(warm::ON_ACCENT, 255);
+        let text_c = hex(warm::TEXT, 255);
+        let muted_c = hex(warm::TEXT_MUTED, 255);
+        let danger_c = hex(warm::DANGER, 255);
 
-        let bubble_alpha = if self.floating_menu {
+        // A raw recording hides the HUD, but the floating button stays: it is the way
+        // back to the overlay that stops the capture.
+        let bubble_alpha = if self.floating_menu || recorder::hiding_controls() {
             1.0
         } else {
             hud_scale.clamp(0.0, 1.0)
@@ -2794,8 +2908,8 @@ impl TouchUi {
         }
 
         // Backdrop scrim & Modal Shell with expressive entrance slide
-        let scrim_a = (185.0 * open_ease.clamp(0.35, 1.0)).round() as u8;
-        ui.fill(0.0, 0.0, w, h, rgba(6, 5, 14, scrim_a));
+        let scrim_a = (196.0 * open_ease.clamp(0.35, 1.0)).round() as u8;
+        ui.fill(0.0, 0.0, w, h, hex(warm::DEEP, scrim_a));
         let (dw, dh, dx, dy_base, side_w, cx, cw, body_top_base, body_h) = hub_metrics(w, h);
         let slide_y = (1.0 - open_ease) * 18.0;
         let dy = dy_base + slide_y;
@@ -2863,30 +2977,31 @@ impl TouchUi {
         ui.border(done_r[0], done_r[1], done_r[2], done_r[3], 9.0, border_c);
         ui.centered_fit(Face::SemiBold, 11.0, done_r, text_c, "Done");
 
-        // Left Sidebar Navigation Tabs (Recommended, Controls, Aiming, Buttons, Advanced)
-        let tabs: [(Icon, &str); 5] = [
+        // Left Sidebar Navigation Tabs (Recommended, Controls, Aiming, Buttons, Advanced, Record)
+        let tabs: [(Icon, &str); 6] = [
             (Icon::HorizonLogo, "Recommended"),
             (Icon::Gamepad, "Controls"),
             (Icon::Crosshair, "Aiming"),
             (Icon::MicrosoftGrid, "Buttons"),
             (Icon::Flask, "Advanced"),
+            (Icon::Monitor, "Record"),
         ];
-        let tab_start_y = dy + 54.0;
+        let tab_start_y = dy + 52.0;
         for (ti, (ic, lbl)) in tabs.into_iter().enumerate() {
-            let ty = tab_start_y + ti as f32 * 39.0;
+            let ty = tab_start_y + ti as f32 * 34.0;
             let active = self.hub_tab == ti as u8;
-            let tr = [dx + 10.0, ty, side_w - 18.0, 34.0];
+            let tr = [dx + 10.0, ty, side_w - 18.0, 30.0];
             if active {
-                ui.rounded(tr[0], tr[1], tr[2], tr[3], 10.0, accent);
-                ui.rounded(tr[0] - 4.0, tr[1] + 7.0, 3.0, 20.0, 1.5, accent_hi);
+                ui.rounded(tr[0], tr[1], tr[2], tr[3], 9.0, accent);
+                ui.rounded(tr[0] - 4.0, tr[1] + 6.0, 3.0, 18.0, 1.5, accent_hi);
             }
-            let fg = if active { text_c } else { muted_c };
-            ui.icon(ic, tr[0] + 9.0, tr[1] + 9.0, 15.0, fg);
+            let fg = if active { accent_fg } else { muted_c };
+            ui.icon(ic, tr[0] + 9.0, tr[1] + 7.0, 15.0, fg);
             ui.text(
                 if active { Face::SemiBold } else { Face::Medium },
                 10.6,
                 tr[0] + 29.0,
-                tr[1] + 8.0,
+                tr[1] + 6.0,
                 fg,
                 lbl,
             );
@@ -2899,7 +3014,8 @@ impl TouchUi {
             1 => 368.0,
             2 => 410.0,
             3 => 242.0,
-            _ => 340.0,
+            4 => 340.0,
+            _ => 488.0,
         };
         let max_scroll = (content_height - body_h).max(0.0);
         self.hub_max_scroll.set(max_scroll);
@@ -3709,8 +3825,8 @@ impl TouchUi {
                     None,
                 );
             }
-            _ => {
-                // Tab 3: Advanced & Quick Actions
+           4 => {
+                // Tab 4: Advanced & Quick Actions
                 ui.text(
                     Face::SemiBold,
                     10.2,
@@ -3826,11 +3942,246 @@ impl TouchUi {
                     "Open Logs",
                 );
             }
+            _ => {
+                // Tab 5: Record — the screen recorder, its options and the last recordings.
+                let status = recorder::status();
+                let settings_rec = recorder::settings();
+                let cells = record_cells(cx, cw, body_y);
+                let recording = status.phase == Phase::Recording;
+                let card_y = body_y + 12.0;
+                ui.text(
+                    Face::SemiBold,
+                    10.2,
+                    cx,
+                    body_y,
+                    muted_c,
+                    "SCREEN RECORDER",
+                );
+                ui.rounded(cx, card_y, cw, 56.0, 12.0, card_bg);
+                ui.border(cx, card_y, cw, 56.0, 12.0, border_c);
+                // A thin copper edge, red while it records: the launcher dashboard's rule.
+                ui.rounded(
+                    cx,
+                    card_y,
+                    3.0,
+                    56.0,
+                    1.5,
+                    if recording { danger_c } else { accent },
+                );
+                let pulse = if recording {
+                    // A slow breathing dot, not a per-frame effect.
+                    let t = crate::ui_theme::motion::ambient_time();
+                    0.55 + 0.45 * (t * 2.2).sin().abs()
+                } else {
+                    1.0
+                };
+                let dot = if recording {
+                    color::with_alpha(danger_c, pulse)
+                } else if status.phase == Phase::Error || status.phase == Phase::Unsupported {
+                    danger_c
+                } else {
+                    accent_hi
+                };
+                ui.rounded(cx + 16.0, card_y + 20.0, 9.0, 9.0, 4.5, dot);
+                let headline = if recording || status.phase == Phase::Starting {
+                    format!(
+                        "{}  {}",
+                        status.phase.label(),
+                        recorder::format_duration(status.millis)
+                    )
+                } else {
+                    status.phase.label().to_owned()
+                };
+                ui.text(Face::SemiBold, 11.0, cx + 32.0, card_y + 9.0, text_c, &headline);
+                let detail = if recording && status.width > 0 {
+                    format!(
+                        "{}x{}  •  {} fps  •  {}",
+                        status.width,
+                        status.height,
+                        status.fps,
+                        settings_rec.audio_label()
+                    )
+                } else if !status.message.is_empty() {
+                    status.message.clone()
+                } else if status.capability.checked {
+                    format!(
+                        "{}  •  display {}x{}",
+                        status.capability.device, status.capability.display.0, status.capability.display.1
+                    )
+                } else {
+                    "Checking what this device can capture…".to_owned()
+                };
+                ui.text(
+                    Face::Regular,
+                    8.6,
+                    cx + 32.0,
+                    card_y + 27.0,
+                    muted_c,
+                    &ellipsis(&detail, ((cw - 140.0) / 4.6).max(8.0) as usize),
+                );
+
+                // Start / Stop, in the same plate for either state.
+                let busy = !status.phase.startable();
+                let start_fill = if busy {
+                    color::with_alpha(danger_c, 0.85)
+                } else {
+                    accent
+                };
+                ui.rounded(
+                    cells.start[0],
+                    cells.start[1],
+                    cells.start[2],
+                    cells.start[3],
+                    9.0,
+                    start_fill,
+                );
+                ui.centered_fit(
+                    Face::SemiBold,
+                    10.6,
+                    cells.start,
+                    if busy { text_c } else { accent_fg },
+                    if busy { "Stop" } else { "Start" },
+                );
+
+                // The three lists of choices: a label over a grid of chips.
+                let chip = |ui: &mut crate::ui_theme::Ui<'_>,
+                            cell: [f32; 4],
+                            label: &str,
+                            selected: bool,
+                            enabled: bool| {
+                    ui.rounded(cell[0], cell[1], cell[2], cell[3], 8.0, if selected {
+                        card_sel
+                    } else {
+                        sidebar_bg
+                    });
+                    ui.stroke_rounded(
+                        cell[0],
+                        cell[1],
+                        cell[2],
+                        cell[3],
+                        8.0,
+                        if selected { 1.5 } else { 1.0 },
+                        if selected {
+                            accent
+                        } else {
+                            border_c
+                        },
+                    );
+                    ui.centered_fit(
+                        if selected { Face::SemiBold } else { Face::Medium },
+                        10.0,
+                        cell,
+                        if !enabled {
+                            muted_c
+                        } else if selected {
+                            accent_hi
+                        } else {
+                            text_c
+                        },
+                        label,
+                    );
+                };
+                ui.text(Face::SemiBold, 9.2, cx, body_y + 64.0, muted_c, "RESOLUTION");
+                for (i, (label, _)) in recorder::RESOLUTIONS.iter().enumerate() {
+                    chip(
+                        &mut ui,
+                        cells.resolution[i],
+                        *label,
+                        settings_rec.resolution == i,
+                        true,
+                    );
+                }
+                ui.text(Face::SemiBold, 9.2, cx, body_y + 146.0, muted_c, "FRAME RATE");
+                for (i, rate) in recorder::FRAME_RATES.iter().enumerate() {
+                    chip(
+                        &mut ui,
+                        cells.fps[i],
+                        &format!("{rate} fps"),
+                        settings_rec.fps == i,
+                        true,
+                    );
+                }
+                ui.text(Face::SemiBold, 9.2, cx, body_y + 228.0, muted_c, "AUDIO");
+                for (i, label) in recorder::AUDIO.iter().enumerate() {
+                    let label = *label;
+                    // In-game audio needs Android 10's playback capture; the chip says so
+                    // rather than failing after the player picks it.
+                    let enabled = i != 2 || status.capability.game_audio;
+                    chip(
+                        &mut ui,
+                        cells.audio[i],
+                        label,
+                        settings_rec.audio == i,
+                        enabled,
+                    );
+                }
+                if status.capability.checked && !status.capability.game_audio {
+                    ui.text(
+                        Face::Regular,
+                        8.4,
+                        cx,
+                        body_y + 272.0,
+                        muted_c,
+                        "In-game audio needs Android 10 or newer.",
+                    );
+                }
+                draw_toggle_row(
+                    &mut ui,
+                    cells.overlay[1],
+                    "Hide Controls While Recording",
+                    "Record raw gameplay; tap the floating button to come back and stop",
+                    Some(settings_rec.hide_overlay),
+                    None,
+                );
+
+                ui.text(
+                    Face::SemiBold,
+                    9.2,
+                    cx,
+                    body_y + 338.0,
+                    muted_c,
+                    "RECORDINGS",
+                );
+                let listed = &status.recordings;
+                if listed.is_empty() {
+                    ui.text(
+                        Face::Regular,
+                        8.8,
+                        cx,
+                        body_y + 358.0,
+                        muted_c,
+                        "Finished recordings appear here, saved as MP4 in Movies/VoltPlus.",
+                    );
+                }
+                for (i, cell) in cells.recordings.into_iter().enumerate() {
+                    let Some(item) = listed.get(i) else {
+                        break;
+                    };
+                    ui.rounded(cell[0], cell[1], cell[2], cell[3], 9.0, card_bg);
+                    ui.border(cell[0], cell[1], cell[2], cell[3], 9.0, border_c);
+                    ui.icon(Icon::Play, cell[0] + 10.0, cell[1] + 9.0, 16.0, accent_hi);
+                    let name = ellipsis(&item.name, ((cw - 150.0) / 5.2).max(8.0) as usize);
+                    ui.text(Face::Medium, 9.6, cell[0] + 32.0, cell[1] + 6.0, text_c, &name);
+                    let meta = format!(
+                        "{}  •  {}",
+                        recorder::format_bytes(item.bytes),
+                        item.uri.starts_with("file:")
+                            .then_some("needs Android 10 to play")
+                            .unwrap_or("tap to play")
+                    );
+                    ui.text(
+                        Face::Regular,
+                        8.2,
+                        cell[0] + 32.0,
+                        cell[1] + 20.0,
+                        muted_c,
+                        &meta,
+                    );
+                }
+            }
         }
 
         ui.set_clip(None);
-
-        // Draw subtle scrollbar indicator if content overflows
         if max_scroll > 2.0 {
             let track_x = dx + dw - 8.0;
             let track_y = body_top + 4.0;

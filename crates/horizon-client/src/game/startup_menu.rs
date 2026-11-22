@@ -1559,7 +1559,9 @@ impl Loading {
             self.menu.controls.viewport(raw_size[0], raw_size[1]);
             let waiting_for_key =
                 self.menu.options_open && self.menu.options.selected_key.is_some();
-            self.menu.controls.in_menu = !waiting_for_key;
+            // Menu mode stays on while a key is picked, so the virtual mouse
+            // keeps moving over the picker instead of freezing.
+            self.menu.controls.in_menu = true;
             self.menu.touch.goy_mode = self.menu.controls.settings.control_style
                 == horizon_client::touch::ControlStyle::GoyControl;
             let mut b = HudBatch::new(raw_size);
@@ -1568,9 +1570,23 @@ impl Loading {
                 touch.location.y as f32 / b.scale,
             ];
             if waiting_for_key {
-                if touch.phase == TouchPhase::Ended {
-                    let changes = self.menu.options.touch_key_picker(&mut self.settings, (b.width, b.height), p[0], p[1]);
-                    self.menu_option_events(changes);
+                match touch.phase {
+                    TouchPhase::Started => {
+                        self.menu
+                            .options
+                            .touch_key_picker_press((b.width, b.height), p[0], p[1]);
+                    }
+                    TouchPhase::Ended => {
+                        let changes = self.menu.options.touch_key_picker(
+                            &mut self.settings,
+                            (b.width, b.height),
+                            p[0],
+                            p[1],
+                        );
+                        self.menu_option_events(changes);
+                    }
+                    TouchPhase::Cancelled => self.menu.options.touch_key_picker_cancel(),
+                    TouchPhase::Moved => {}
                 }
                 return Ok(());
             }
@@ -1862,6 +1878,43 @@ impl Loading {
                     }
                     InGameMenuAction::OpenKeyboard => {
                         crate::platform::show("");
+                    }
+                    InGameMenuAction::SetRecorderResolution(index) => {
+                        let index =
+                            usize::from(index).min(horizon_client::recorder::RESOLUTIONS.len() - 1);
+                        horizon_client::recorder::update_settings(|s| s.resolution = index);
+                    }
+                    InGameMenuAction::SetRecorderFps(index) => {
+                        let index =
+                            usize::from(index).min(horizon_client::recorder::FRAME_RATES.len() - 1);
+                        horizon_client::recorder::update_settings(|s| s.fps = index);
+                    }
+                    InGameMenuAction::SetRecorderAudio(index) => {
+                        let index =
+                            usize::from(index).min(horizon_client::recorder::AUDIO.len() - 1);
+                        horizon_client::recorder::update_settings(|s| s.audio = index);
+                        let status = horizon_client::recorder::status();
+                        if index == 2 && status.capability.checked && !status.capability.game_audio {
+                            let mut status = status;
+                            status.phase = horizon_client::recorder::Phase::Unsupported;
+                            status.message =
+                                "in-game audio needs Android 10 or newer; use microphone or none"
+                                    .to_owned();
+                            horizon_client::recorder::publish(status);
+                        }
+                    }
+                    InGameMenuAction::ToggleRecorderOverlay => {
+                        horizon_client::recorder::update_settings(|s| s.hide_overlay = !s.hide_overlay);
+                    }
+                    InGameMenuAction::RecorderStart => crate::screen_record::start(),
+                    InGameMenuAction::RecorderStop => crate::screen_record::stop(),
+                    InGameMenuAction::RecorderPlay(uri) => {
+                        let note = crate::screen_record::play(&uri);
+                        let mut status = horizon_client::recorder::status();
+                        if !note.is_empty() {
+                            status.message = note;
+                        }
+                        horizon_client::recorder::publish(status);
                     }
                     InGameMenuAction::SetResolutionScale(pct) => {
                         let clamped = pct.clamp(25, 100);
@@ -2477,12 +2530,14 @@ impl Loading {
         );
         #[cfg(target_os = "android")]
         {
+            crate::screen_record::refresh(self.menu.touch.floating_menu);
             let size = self.menu_size();
             self.menu.controls.viewport(size[0], size[1]);
             let waiting_for_key =
                 self.menu.options_open && self.menu.options.selected_key.is_some();
             let hud_in_menu = !waiting_for_key;
-            self.menu.controls.in_menu = hud_in_menu;
+            // The picker is a menu: keep the virtual mouse alive over it.
+            self.menu.controls.in_menu = true;
             self.menu.controls.goy_rendered_by_ui = true;
             self.menu
                 .controls

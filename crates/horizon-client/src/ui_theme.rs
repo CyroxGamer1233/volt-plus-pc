@@ -3546,7 +3546,7 @@ impl<'a> Ui<'a> {
                 cx,
                 sub_y,
                 color::with_alpha(theme.text_muted, title_t * 0.9),
-                "RUST EDITION  •  ANDROID LAUNCHER",
+                "VOLT+ EDITION  •  ANDROID LAUNCHER",
             );
 
             // Real initialization progress indicator

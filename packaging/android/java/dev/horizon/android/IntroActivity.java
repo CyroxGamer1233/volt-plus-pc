@@ -102,6 +102,14 @@ public final class IntroActivity extends android.app.Activity implements android
         super.onDestroy();
     }
     @Override public void onBackPressed() { openLauncher(); }
+    @Override protected void onActivityResult(int request, int result, android.content.Intent data) {
+        // The screen recorder's consent can come back here while the intro is up.
+        if (request == ScreenRecorder.REQUEST_CONSENT) {
+            ScreenRecorder.onActivityResult(this, request, result, data);
+            return;
+        }
+        super.onActivityResult(request, result, data);
+    }
 
     private void releasePlayer() {
         prepared = false;
