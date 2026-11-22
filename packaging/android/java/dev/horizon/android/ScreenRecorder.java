@@ -42,32 +42,57 @@ public final class ScreenRecorder {
      * the overlay needs before it offers a combination.
      */
     public static String capabilities(android.content.Context context) {
-        if (context == null) {
-            return "0;0;0;0;0;0;unknown";
-        }
         int sdk = android.os.Build.VERSION.SDK_INT;
-        android.util.DisplayMetrics metrics = context.getResources().getDisplayMetrics();
-        boolean inGameAudio = sdk >= 29;
-        boolean microphone =
-                context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
-                        == android.content.pm.PackageManager.PERMISSION_GRANTED;
-        boolean projection =
-                context.getSystemService(android.content.Context.MEDIA_PROJECTION_SERVICE) != null;
+        int width = 0;
+        int height = 0;
+        boolean microphone = false;
+        boolean projection = false;
+        String device = "unknown";
+        // Every field is read on its own: a context that refuses one lookup must not
+        // turn the whole answer into "this phone cannot record".
+        try {
+            if (context != null) {
+                android.util.DisplayMetrics metrics = context.getResources().getDisplayMetrics();
+                width = metrics.widthPixels;
+                height = metrics.heightPixels;
+            }
+        } catch (Throwable ignored) {
+        }
+        try {
+            if (context != null) {
+                device = android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL;
+            }
+        } catch (Throwable ignored) {
+        }
+        try {
+            if (context != null) {
+                microphone =
+                        context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
+                                == android.content.pm.PackageManager.PERMISSION_GRANTED;
+            }
+        } catch (Throwable ignored) {
+        }
+        try {
+            if (context != null) {
+                projection =
+                        context.getSystemService(android.content.Context.MEDIA_PROJECTION_SERVICE)
+                                != null;
+            }
+        } catch (Throwable ignored) {
+        }
         return sdk
                 + ";"
-                + metrics.widthPixels
+                + width
                 + ";"
-                + metrics.heightPixels
+                + height
                 + ";"
-                + (inGameAudio ? 1 : 0)
+                + (sdk >= 29 ? 1 : 0)
                 + ";"
                 + (microphone ? 1 : 0)
                 + ";"
                 + (projection ? 1 : 0)
                 + ";"
-                + android.os.Build.MANUFACTURER
-                + " "
-                + android.os.Build.MODEL;
+                + device;
     }
 
     /**

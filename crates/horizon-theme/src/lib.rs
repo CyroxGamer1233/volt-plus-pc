@@ -330,7 +330,8 @@ pub const LIGHT: Palette = Palette {
     ink: 0x16181f,
     ink_soft: 0x3b3e49,
     muted: 0x646875,
-    accent: 0x5b3fd6,
+    // Volt Plus: the copper accent the launcher dashboard and Control Hub use.
+    accent: 0x8c5a33,
     on_accent: 0xffffff,
     danger: 0xb4372a,
     success: 0x1d7a48,
@@ -346,8 +347,10 @@ pub const DARK: Palette = Palette {
     ink: 0xecedf3,
     ink_soft: 0xc5c7d1,
     muted: 0x8b8f9c,
-    accent: 0x9a86ff,
-    on_accent: 0x0d0e13,
+    // Volt Plus: copper in place of the violet accent, so the in-game options,
+    // sliders, focus rings and key picker match the Control Hub.
+    accent: 0xc98b57,
+    on_accent: 0x190f08,
     danger: 0xf07a68,
     success: 0x45c27a,
     dark: true,

@@ -194,17 +194,12 @@ pub fn refresh(watching: bool) {
 
 /// Asks the system for the screen-capture prompt with the overlay's current choices.
 pub fn start() {
-    let known = recorder::status().capability;
-    let capability = if known.checked { known } else { capabilities() };
-    if !capability.projection {
-        let mut status = recorder::status();
-        status.phase = Phase::Unsupported;
-        status.message = "this device has no screen capture service".to_owned();
-        recorder::publish(status);
-        return;
-    }
+    // The capability poll can come back empty (a failed JNI call looks exactly like a
+    // device without the service), so it only *warns* here: `ScreenRecorder.start`
+    // re-checks everything and answers with the exact reason when it cannot record.
+    let capability = recorder::status().capability;
     let settings = recorder::settings();
-    if settings.audio == 2 && !capability.game_audio {
+    if capability.checked && settings.audio == 2 && !capability.game_audio {
         let mut status = recorder::status();
         status.phase = Phase::Unsupported;
         status.message =
@@ -213,12 +208,17 @@ pub fn start() {
         return;
     }
     let (display_width, display_height) = capability.display;
-    // The height is the request; Android fits it to the display and the encoder.
-    let height = settings.height().min(display_height.max(240));
-    let width = if display_height == 0 {
-        1280
+    // The height is the request; Android fits it to the display and the encoder. When the
+    // display size is unknown, keep the chosen height and a 16:9 width.
+    let height = if display_height >= 240 {
+        settings.height().min(display_height)
     } else {
-        ((u64::from(height) * u64::from(display_width.max(1))) / u64::from(display_height)) as u32
+        settings.height()
+    };
+    let width = if display_width >= 160 && display_height >= 240 {
+        ((u64::from(height) * u64::from(display_width)) / u64::from(display_height)) as u32
+    } else {
+        (height * 16) / 9
     };
     let frames = settings.frames() as i32;
     let audio = settings.audio as i32;

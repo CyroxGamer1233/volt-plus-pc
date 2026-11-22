@@ -185,6 +185,12 @@ impl Game<'_> {
         self.watch_pack_folder();
         let mut ui = std::mem::take(&mut self.ui.options);
         ui.draw(&self.settings, batch, &self.gui.atlas, self.cursor);
+        // The key picker belongs on top of whatever page is open, including the ones
+        // that draw their own screen inside `draw`; drawing it again is idempotent.
+        #[cfg(target_os = "android")]
+        if ui.selected_key.is_some() {
+            ui.draw_touch_key_picker(batch, &self.gui.atlas);
+        }
         self.ui.options = ui;
         self.show_calibration(batch.height);
         #[cfg(target_os = "android")]
