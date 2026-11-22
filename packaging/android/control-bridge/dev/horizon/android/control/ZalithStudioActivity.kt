@@ -75,11 +75,13 @@ class ZalithStudioActivity : ComponentActivity() {
                             // pack() was evaluated on the UI thread by the editor;
                             // serialization and file I/O are serialized below.
                             saving = true
+                            Log.i("VoltJavaControls", "Saving experimental Zalith layout")
                             lifecycleScope.launch {
                                 try {
                                     val saved = withContext(Dispatchers.IO) {
                                         ZalithStudioFiles.saveCopy(source, filesDir, packed)
                                     }
+                                    Log.i("VoltJavaControls", "Saved experimental Zalith layout")
                                     setResult(Activity.RESULT_OK, Intent().putExtra("layout_path", saved.path))
                                     Toast.makeText(this@ZalithStudioActivity, "Saved a new layout copy", Toast.LENGTH_SHORT).show()
                                     finish()
