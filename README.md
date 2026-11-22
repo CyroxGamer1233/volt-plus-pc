@@ -35,6 +35,20 @@
 
 ---
 
+## Watch the intro
+
+<p align="center">
+  <a href="https://github.com/entitybrian69-bit/volt-plus/blob/android/packaging/android/media/intro.mp4?raw=true" title="Play the intro with sound">
+    <img src="docs/media/volt-plus/intro.gif" width="720" alt="Volt Plus intro animation — click to play with sound" />
+  </a>
+  <br />
+  <a href="https://github.com/entitybrian69-bit/volt-plus/blob/android/packaging/android/media/intro.mp4?raw=true"><b>▶ Play the intro with sound</b></a>
+  <br />
+  <sub>The same 5-second clip the launcher plays on first start (<code>packaging/android/media/intro.mp4</code>, 1080p60, 4.2 MB).</sub>
+</p>
+
+---
+
 ## Screenshots
 
 <p align="center">
@@ -43,11 +57,11 @@
 
 | **Mods** | **Resource Packs** |
 | :---: | :---: |
-| ![Mods tab: 260 Horizon mods, one-tap install](docs/media/volt-plus/mods.jpg) | ![Resource packs catalog with Modrinth results](docs/media/volt-plus/resource-packs.jpg) |
+| ![Mods tab: 260 curated mods, one-tap install](docs/media/volt-plus/mods.jpg) | ![Resource packs catalog with Modrinth results](docs/media/volt-plus/resource-packs.jpg) |
 
 | **Shader Packs** | **Content Library** |
 | :---: | :---: |
-| ![Shader packs: Horizon and Modrinth catalogs](docs/media/volt-plus/shader-packs.jpg) | ![Installed content: mods, packs and shaders](docs/media/volt-plus/content-library.jpg) |
+| ![Shader packs: Volt and Modrinth catalogs](docs/media/volt-plus/shader-packs.jpg) | ![Installed content: mods, packs and shaders](docs/media/volt-plus/content-library.jpg) |
 
 | **Skins & Capes Studio** | **Settings** |
 | :---: | :---: |
