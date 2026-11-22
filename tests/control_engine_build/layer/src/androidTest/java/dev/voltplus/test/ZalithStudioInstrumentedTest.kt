@@ -29,6 +29,7 @@ class ZalithStudioInstrumentedTest {
         val original = dir.resolve("instrumentation-original.json")
         val bytes = instrumentation.context.assets.open("zalith-v11-fixture.json").use { it.readBytes() }
         original.writeBytes(bytes)
+        val existing = dir.listFiles()?.map { it.name }?.toSet().orEmpty()
         try {
             val intent = Intent(app, ZalithStudioActivity::class.java)
                 .putExtra("layout_path", original.absolutePath)
@@ -39,13 +40,16 @@ class ZalithStudioInstrumentedTest {
                 compose.onNodeWithText("Label").performTextInput("Studio test")
                 compose.onNodeWithText("Save copy").performClick()
                 compose.waitUntil(timeoutMillis = 15000) {
-                    dir.listFiles()?.any { f -> f.name.matches(Regex("[a-f0-9]{64}\\.json")) } == true
+                    dir.listFiles()?.any { f -> f.name !in existing && f.name.matches(Regex("[a-f0-9]{64}\\.json")) } == true
                 }
-                val saved = dir.listFiles()!!.single { f -> f.name.matches(Regex("[a-f0-9]{64}\\.json")) }
+                val saved = dir.listFiles()!!.single { f -> f.name !in existing && f.name.matches(Regex("[a-f0-9]{64}\\.json")) }
                 assertArrayEquals(bytes, original.readBytes())
                 val layout = ZalithStudioFiles.load(saved, app.filesDir)
                 assertTrue(layout.layers.value.first().normalButtons.value.any { b -> b.text.default == "Studio test" })
             }
-        } finally { dir.deleteRecursively() }
+        } finally {
+            original.delete()
+            dir.listFiles()?.filter { it.name !in existing && it.name.matches(Regex("[a-f0-9]{64}\\.json")) }?.forEach { it.delete() }
+        }
     }
 }
