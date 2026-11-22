@@ -31,7 +31,7 @@ class PojavConverterTest {
     @Test fun adapterMigratesScratchCopyAndLeavesOriginalUntouched() {
         val original = javaClass.classLoader!!.getResourceAsStream("pojav-v4.json")!!.readBytes()
         // Version 2 triggers the upstream converter's in-place save.
-        val v2 = String(original).replace("\"version\": 4", "\"version\": 2").toByteArray()
+        val v2 = String(original).replace("\"version\":4", "\"version\":2").toByteArray()
         assertFalse(v2.contentEquals(original))
         val before = v2.copyOf()
         val cache = Files.createTempDirectory("pojav-safe-").toFile()
