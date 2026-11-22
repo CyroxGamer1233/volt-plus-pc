@@ -6747,7 +6747,7 @@ impl Launcher {
                 match crate::documents::begin_control_import(game_home) {
                     Ok(()) => {
                         self.catalog.status =
-                            "Pick a control .json file — Horizon will auto-detect MCPE or GoyControl and save it in the right folder."
+                            "Pick a control .json file. Java layouts are saved separately but cannot be used yet."
                                 .into();
                     }
                     Err(err) => {

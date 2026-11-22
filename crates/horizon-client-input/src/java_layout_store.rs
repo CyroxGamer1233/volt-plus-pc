@@ -18,6 +18,18 @@ impl Format {
     }
 }
 
+/// Identify layouts that must never be routed into the unrelated Horizon
+/// preset importer, including malformed or future upstream versions.
+pub fn looks_like_java(bytes: &[u8]) -> bool {
+    serde_json::from_slice::<serde_json::Value>(bytes).ok()
+        .and_then(|value| value.as_object().map(|object| {
+            object.contains_key("mControlDataList")
+                || object.contains_key("layers")
+                || object.contains_key("editorVersion")
+        }))
+        .unwrap_or(false)
+}
+
 /// Check only the format and version envelope. Full upstream validation still
 /// belongs to the original engine; this function does not flatten any fields.
 pub fn detect(bytes: &[u8]) -> Result<Format, String> {
@@ -115,6 +127,7 @@ mod tests {
         let _ = fs::remove_dir_all(&home);
         fs::create_dir_all(&home).unwrap();
         for (bytes, expected) in [(POJAV, Format::Pojav), (ZALITH, Format::Zalith)] {
+            assert!(looks_like_java(bytes));
             assert_eq!(detect(bytes).unwrap(), expected);
             let (kind, file) = store(&home, bytes).unwrap();
             assert_eq!(kind, expected);
@@ -132,6 +145,8 @@ mod tests {
             assert!(detect(input.as_bytes()).is_err(), "{input}");
         }
         assert!(detect(&vec![b' '; MAX_LAYOUT_BYTES + 1]).is_err());
+        assert!(!looks_like_java(br#"{"custom_buttons": []}"#));
+        assert!(looks_like_java(br#"{"mControlDataList": [], "version": 99}"#));
     }
     #[cfg(unix)]
     #[test]
