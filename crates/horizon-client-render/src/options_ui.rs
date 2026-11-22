@@ -1775,6 +1775,8 @@ pub struct OptionsUi {
     row_bands: Vec<[f32; 2]>,
     /// Volt+ Settings: its tab, the panel's scroll and the motion between tabs.
     volt: VoltState,
+    /// The card pages' rail: where each of the Video page's group headings sits.
+    card_rail: [f32; 3],
 }
 impl Default for OptionsUi {
     fn default() -> Self {
@@ -1820,6 +1822,7 @@ impl Default for OptionsUi {
             focus: None,
             can_change_value: false,
             volt: VoltState::default(),
+            card_rail: [0.0; 3],
             size: (427.0, 240.0),
             framebuffer: [1280, 720],
             split_guest: false,
@@ -2962,6 +2965,9 @@ impl OptionsUi {
             self.settings_search.x = cx - 100.0;
             self.settings_search.y = 17.0;
         }
+        if card_page(page) {
+            return self.card_layout(page, s, w, h);
+        }
         let done = |y: f32| button(cx - 100.0, y, 200.0, tr("gui.done"), Act::Done);
         // (list top, list bottom, content height)
         let (mut top, mut bottom, mut content) = (33.0, h - 33.0, 0.0);
@@ -3741,8 +3747,11 @@ impl OptionsUi {
         let in_world = self.in_world;
         ui::menu_background(batch, atlas, 0.0, 0.0, w, h, in_world);
         let list = bottom > top;
-        if list {
+        if list && !card_page(page) {
             ui::list_background(batch, atlas, top, bottom, in_world);
+        }
+        if card_page(page) {
+            self.draw_card(s, batch, atlas, w, h, page, top, bottom);
         }
         let visible = |wd: &Widget| !wd.list || (wd.y < bottom && wd.y + wd.h > top);
         // The list's narration: the language list is an ObjectSelectionList,
@@ -3754,6 +3763,7 @@ impl OptionsUi {
             self.narrate_list(&widgets, list_key, (top, bottom), w, cursor);
         }
         let mut tooltip = None;
+        let card = card_box(w, h);
         for (wd_idx, wd) in widgets.iter().enumerate() {
             if !visible(wd) {
                 continue;
@@ -3823,6 +3833,30 @@ impl OptionsUi {
                         .collect::<Vec<_>>(),
                     _ => atlas.font.split(&tip, 170.0),
                 });
+            }
+            if card_page(page) {
+                if let WKind::Text {
+                    text,
+                    color,
+                    centered,
+                } = &wd.kind
+                {
+                    let x = if *centered {
+                        wd.x + ((wd.w - atlas.font.width_text(text)) / 2.0).floor()
+                    } else {
+                        wd.x
+                    };
+                    batch.text_styled(atlas, text, x, wd.y, *color, false);
+                } else {
+                    self.draw_card_row(s, batch, atlas, wd, hover, page, &card);
+                }
+                if wd.list && (wd.y < top || wd.y + wd.h > bottom) {
+                    batch.clip_since(start, 0.0, top, w, bottom);
+                }
+                crate::widgets::last_narratable(|n| {
+                    narrate_widget(n, s, wd, hover, list_key, framebuffer);
+                });
+                continue;
             }
             match &wd.kind {
                 WKind::Button { label, active, act } => {
@@ -4031,8 +4065,7 @@ impl OptionsUi {
         let page = self.page();
         let restyled = matches!(
             page,
-            Page::Video
-                | Page::Horizon
+            Page::Horizon
                 | Page::Mods
                 | Page::NativeMod(_)
                 | Page::Graphics
@@ -5876,6 +5909,9 @@ struct VoltGeometry {
     panel: [f32; 4],
     search: [f32; 4],
     tabs: Vec<(VoltTab, [f32; 4])>,
+    /// The Interface rows under the tabs, and the label above them.
+    interface: Vec<(Page, &'static str, [f32; 4])>,
+    interface_y: f32,
     done: [f32; 4],
     /// The scrolling list's top and bottom.
     list: [f32; 2],
@@ -5885,41 +5921,55 @@ struct VoltGeometry {
 
 fn volt_geometry(w: f32, h: f32) -> VoltGeometry {
     let m = 4.0;
-    let sidebar_w = (w * 0.30).clamp(92.0, 150.0).min((w * 0.5).max(60.0));
-    let sidebar = [m, m, sidebar_w, (h - m * 2.0).max(60.0)];
-    let panel_x = sidebar[0] + sidebar[2] + m;
+    let sidebar_w = (w * 0.24).clamp(84.0, 142.0).min((w * 0.42).max(70.0));
+    let sidebar = [m, m, sidebar_w, (h - m * 2.0).max(80.0)];
+    let panel_x = sidebar[0] + sidebar[2] + 5.0;
     let panel = [
         panel_x,
         m,
         (w - panel_x - m).max(80.0),
-        (h - m * 2.0).max(60.0),
+        (h - m * 2.0).max(80.0),
     ];
-    let search = [sidebar[0] + 4.0, sidebar[1] + 26.0, sidebar[2] - 8.0, 14.0];
+    let search = [sidebar[0] + 6.0, sidebar[1] + 30.0, sidebar[2] - 12.0, 14.0];
     let mut tabs = Vec::new();
-    let mut y = search[1] + search[3] + 6.0;
+    let mut y = search[1] + search[3] + 5.0;
     for which in VoltTab::ALL {
-        tabs.push((which, [sidebar[0] + 2.0, y, sidebar[2] - 4.0, 15.0]));
-        y += 17.0;
+        tabs.push((which, [sidebar[0] + 4.0, y, sidebar[2] - 8.0, 16.0]));
+        y += 18.0;
+    }
+    // The section under the tabs, and the plate under it.
+    let interface_y = y + 10.0;
+    let mut interface = Vec::new();
+    let mut iy = interface_y + 12.0;
+    for (page, label) in [
+        (Page::Video, "HUD"),
+        (Page::Controls, "Controls"),
+        (Page::Sound, "Audio"),
+    ] {
+        interface.push((page, label, [sidebar[0] + 4.0, iy, sidebar[2] - 8.0, 15.0]));
+        iy += 17.0;
     }
     let done = [
-        sidebar[0] + 4.0,
-        (h - m - 20.0).max(sidebar[1]),
-        sidebar[2] - 8.0,
-        20.0,
+        sidebar[0] + 6.0,
+        sidebar[1] + sidebar[3] - 28.0,
+        sidebar[2] - 12.0,
+        22.0,
     ];
-    let list_top = panel[1] + 18.0;
-    let list_bottom = (panel[1] + panel[3] - 36.0).max(list_top + 30.0);
+    let list_top = panel[1] + 22.0;
+    let list_bottom = (panel[1] + panel[3] - 40.0).max(list_top + 30.0);
     let tip = [
-        panel[0] + 4.0,
-        list_bottom + 4.0,
-        panel[2] - 8.0,
-        (panel[1] + panel[3] - list_bottom - 8.0).max(24.0),
+        panel[0] + 5.0,
+        list_bottom + 5.0,
+        panel[2] - 10.0,
+        (panel[1] + panel[3] - list_bottom - 10.0).max(26.0),
     ];
     VoltGeometry {
         sidebar,
         panel,
         search,
         tabs,
+        interface,
+        interface_y,
         done,
         list: [list_top, list_bottom],
         tip,
@@ -6169,20 +6219,41 @@ impl OptionsUi {
             1.0,
             rgb(0xffffff, 26),
         );
-        // The sidebar: its title, its section, the search box and its tabs.
+        // The sidebar: its own card, then its title, its section, the search box
+        // and its tabs.
+        volt_rounded(
+            batch,
+            atlas,
+            geo.sidebar[0],
+            geo.sidebar[1],
+            geo.sidebar[2],
+            geo.sidebar[3],
+            5.0,
+            rgb(0x0d0b13, 228),
+        );
+        volt_border(
+            batch,
+            atlas,
+            geo.sidebar[0],
+            geo.sidebar[1],
+            geo.sidebar[2],
+            geo.sidebar[3],
+            5.0,
+            rgb(0xffffff, 30),
+        );
         batch.text_styled(
             atlas,
             &Text::literal("Volt"),
-            geo.sidebar[0] + 4.0,
-            geo.sidebar[1] + 2.0,
+            geo.sidebar[0] + 8.0,
+            geo.sidebar[1] + 5.0,
             rgb(0xffffff, 255),
             false,
         );
         batch.text_styled(
             atlas,
             &Text::literal(lang::get("Graphics")),
-            geo.sidebar[0] + 4.0,
-            geo.sidebar[1] + 13.0,
+            geo.sidebar[0] + 8.0,
+            geo.sidebar[1] + 16.0,
             rgb(0x9a9aa8, 255),
             false,
         );
@@ -6251,6 +6322,43 @@ impl OptionsUi {
                 false,
             );
         }
+        // The Interface section: the pages the mockup lists under the tabs.
+        batch.text_styled(
+            atlas,
+            &Text::literal(lang::get("Interface")),
+            geo.sidebar[0] + 8.0,
+            geo.interface_y,
+            rgb(0x7f7c8c, 255),
+            false,
+        );
+        for (page, label, rect) in &geo.interface {
+            let over = ui::hovered(cursor, rect[0], rect[1], rect[2], rect[3]);
+            if over {
+                volt_rounded(
+                    batch,
+                    atlas,
+                    rect[0],
+                    rect[1],
+                    rect[2],
+                    rect[3],
+                    3.0,
+                    rgb(0xffffff, 22),
+                );
+            }
+            batch.text_styled(
+                atlas,
+                &Text::literal(lang::get(label)),
+                rect[0] + 8.0,
+                rect[1] + 4.0,
+                if over {
+                    rgb(0xffffff, 255)
+                } else {
+                    rgb(0x9a9aa8, 255)
+                },
+                false,
+            );
+            let _ = page;
+        }
         // The rows, clipped to the list.
         let start = batch.vertices.len();
         let mut hovered = None;
@@ -6284,7 +6392,17 @@ impl OptionsUi {
                             rect[2],
                             rect[3],
                             3.0,
-                            rgb(0xffffff, 20),
+                            rgb(0xffffff, 18),
+                        );
+                        volt_border(
+                            batch,
+                            atlas,
+                            rect[0],
+                            y,
+                            rect[2],
+                            rect[3],
+                            3.0,
+                            rgb(0xffffff, 200),
                         );
                     }
                     let (caption, value) = volt_split(&setting.item.label(s).plain());
@@ -6295,7 +6413,8 @@ impl OptionsUi {
                         value
                     };
                     let value_width = atlas.font.width(&value);
-                    let caption = volt_fit(atlas, &caption, (rect[2] - 24.0 - value_width).max(20.0));
+                    let track_x = rect[0] + rect[2] * 0.56;
+                    let caption = volt_fit(atlas, &caption, (rect[2] * 0.54 - 12.0).max(20.0));
                     let color = if blocked.is_some() {
                         rgb(0x8a8a96, 255)
                     } else {
@@ -6309,17 +6428,39 @@ impl OptionsUi {
                         color,
                         false,
                     );
-                    let value_x = rect[0] + rect[2] - 7.0 - value_width;
-                    batch.text_styled(
-                        atlas,
-                        &Text::literal(value),
-                        value_x,
-                        y + 3.0,
-                        rgb(0xd8d8e0, 255),
-                        false,
+                    let value_x = if slider.is_some() {
+                        (track_x - 8.0 - value_width).max(rect[0] + 6.0)
+                    } else {
+                        rect[0] + rect[2] - 7.0 - value_width
+                    };
+                    let on_off = matches!(
+                        value.trim_start_matches('<').trim().trim_end_matches('>').trim(),
+                        "On" | "Off" | "ON" | "OFF"
                     );
+                    if on_off {
+                        // A switch, as the mockup draws VSync.
+                        let knob = 11.0;
+                        let switch = [rect[0] + rect[2] - knob * 2.2 - 7.0, y + 2.0, knob * 2.2, knob];
+                        let on = !matches!(
+                            value
+                                .trim_start_matches('<')
+                                .trim()
+                                .trim_end_matches('>')
+                                .trim(),
+                            "Off" | "OFF"
+                        );
+                        card_switch(batch, atlas, switch, on, over);
+                    } else {
+                        batch.text_styled(
+                            atlas,
+                            &Text::literal(value),
+                            value_x,
+                            y + 3.0,
+                            rgb(0xd8d8e0, 255),
+                            false,
+                        );
+                    }
                     if let Some(position) = slider {
-                        let track_x = rect[0] + rect[2] * 0.45;
                         let track_w = (rect[0] + rect[2] - 7.0 - track_x).max(1.0);
                         batch.fill(atlas, track_x, y + 15.0, track_w, 2.0, rgb(0xffffff, 40));
                         batch.fill(
@@ -6516,6 +6657,16 @@ impl OptionsUi {
                     return vec![Event::ButtonClick];
                 }
             }
+            for (page, _, rect) in &geo.interface {
+                if ui::hovered((x, y), rect[0], rect[1], rect[2], rect[3]) {
+                    let page = *page;
+                    if self.page() != page {
+                        self.settings_search.focused = false;
+                        self.push(page);
+                    }
+                    return vec![Event::ButtonClick];
+                }
+            }
             if ui::hovered((x, y), geo.done[0], geo.done[1], geo.done[2], geo.done[3]) {
                 self.settings_search.focused = false;
                 let mut events = vec![Event::ButtonClick];
@@ -6557,7 +6708,7 @@ impl OptionsUi {
                 return vec![Event::ButtonClick];
             }
             if setting.item.slider(s).is_some() {
-                let track_x = rect[0] + rect[2] * 0.45;
+                let track_x = rect[0] + rect[2] * 0.56;
                 let width = (rect[0] + rect[2] - 7.0 - track_x).max(1.0);
                 // A press on the caption leaves the value alone: only the track takes it.
                 if x < track_x {
@@ -6575,6 +6726,691 @@ impl OptionsUi {
         }
         Vec::new()
     }
+}
+
+// ---------------------------------------------------------------------------
+// The mockups' card: a dark rounded panel, a section rail beside one column of
+// rows, the description box under them and the accent Done plate.
+// ---------------------------------------------------------------------------
+
+/// The card's heading colour: the mockups' purple.
+const CARD_HEADING: u32 = rgb(0xb9a6ff, 255);
+/// The card's body text and its quieter labels.
+const CARD_TEXT: u32 = rgb(0xffffff, 255);
+const CARD_MUTED: u32 = rgb(0x9a96a8, 255);
+/// The card's accent, its panels and the hairlines between rows.
+const CARD_ACCENT: u32 = rgb(0x8b6cff, 255);
+const CARD_ROW: u32 = rgb(0x1a1824, 255);
+
+/// Whether a page draws its list as the mockup's card: one option a row, its
+/// control on the right and a rail of sections beside it.
+fn card_page(page: Page) -> bool {
+    matches!(page, Page::Video | Page::Mods)
+}
+
+/// Where the card, its rail, its rows and its footer sit, in GUI pixels.
+#[derive(Clone, Copy)]
+struct CardBox {
+    panel: [f32; 4],
+    rail: [f32; 4],
+    /// The rows' column.
+    content: [f32; 4],
+    /// The description box beside the Done plate.
+    footer: [f32; 4],
+    done: [f32; 4],
+    /// The search box in the header.
+    search: [f32; 4],
+}
+
+fn card_box(w: f32, h: f32) -> CardBox {
+    let m = 4.0;
+    let panel = [
+        m,
+        m,
+        (w - m * 2.0).max(200.0),
+        (h - m * 2.0).max(150.0),
+    ];
+    let rail_w = (panel[2] * 0.22).clamp(56.0, 104.0);
+    let rail = [
+        panel[0] + 3.0,
+        panel[1] + 20.0,
+        rail_w - 6.0,
+        panel[3] - 26.0,
+    ];
+    let x = panel[0] + rail_w + 10.0;
+    let width = (panel[0] + panel[2] - 10.0 - x).max(80.0);
+    let top = panel[1] + 20.0;
+    let footer_h = 32.0;
+    let content = [
+        x,
+        top,
+        width,
+        (panel[1] + panel[3] - footer_h - 8.0 - top).max(40.0),
+    ];
+    let footer = [
+        x,
+        panel[1] + panel[3] - footer_h,
+        width,
+        footer_h - 6.0,
+    ];
+    let done = [
+        panel[0] + panel[2] - 76.0,
+        footer[1] + 4.0,
+        66.0,
+        20.0,
+    ];
+    let search = [
+        panel[0] + panel[2] - 134.0,
+        panel[1] + 4.0,
+        126.0,
+        14.0,
+    ];
+    CardBox {
+        panel,
+        rail,
+        content,
+        footer,
+        done,
+        search,
+    }
+}
+
+/// The row a control sits in, as the card paints its background and hairline.
+fn card_row_rect(page: Page, card: &CardBox, wd: &Widget) -> [f32; 4] {
+    match page {
+        Page::Mods => [card.content[0], wd.y - 10.0, card.content[2], 32.0],
+        _ => [card.content[0], wd.y - 4.0, card.content[2], 22.0],
+    }
+}
+
+/// A switch: the mockups' pill with a knob, purple when on.
+fn card_switch(batch: &mut HudBatch, atlas: &HudAtlas, rect: [f32; 4], on: bool, hover: bool) {
+    let color = if on {
+        if hover {
+            rgb(0x9d80ff, 255)
+        } else {
+            CARD_ACCENT
+        }
+    } else if hover {
+        rgb(0x54505e, 255)
+    } else {
+        rgb(0x3e3a48, 255)
+    };
+    volt_rounded(batch, atlas, rect[0], rect[1], rect[2], rect[3], rect[3] / 2.0, color);
+    let knob = rect[3] - 4.0;
+    let x = if on {
+        rect[0] + rect[2] - knob - 2.0
+    } else {
+        rect[0] + 2.0
+    };
+    volt_rounded(batch, atlas, x, rect[1] + 2.0, knob, knob, knob / 2.0, CARD_TEXT);
+}
+
+/// A pill with a value inside it: the mockups' "< Auto >".
+fn card_pill(
+    batch: &mut HudBatch,
+    atlas: &HudAtlas,
+    rect: [f32; 4],
+    label: &str,
+    hover: bool,
+) {
+    volt_rounded(
+        batch,
+        atlas,
+        rect[0],
+        rect[1],
+        rect[2],
+        rect[3],
+        3.0,
+        if hover {
+            rgb(0x232030, 255)
+        } else {
+            CARD_ROW
+        },
+    );
+    volt_border(
+        batch,
+        atlas,
+        rect[0],
+        rect[1],
+        rect[2],
+        rect[3],
+        3.0,
+        if hover {
+            rgb(0xffffff, 255)
+        } else {
+            rgb(0xffffff, 51)
+        },
+    );
+    ui::centered_text(
+        batch,
+        atlas,
+        &Text::literal(if label.is_empty() {
+            String::new()
+        } else {
+            format!("< {label} >")
+        }),
+        rect[0],
+        rect[1] + (rect[3] - 8.0) / 2.0,
+        rect[2],
+        CARD_TEXT,
+    );
+}
+
+/// The accent Done plate the mockups put in the footer.
+fn card_plate(batch: &mut HudBatch, atlas: &HudAtlas, rect: [f32; 4], label: &Text, hover: bool) {
+    volt_rounded(
+        batch,
+        atlas,
+        rect[0],
+        rect[1],
+        rect[2],
+        rect[3],
+        4.0,
+        if hover {
+            rgb(0x9d80ff, 255)
+        } else {
+            CARD_ACCENT
+        },
+    );
+    ui::centered_text(
+        batch,
+        atlas,
+        label,
+        rect[0],
+        rect[1] + (rect[3] - 8.0) / 2.0,
+        rect[2],
+        0xFFFFFFFF,
+    );
+}
+
+impl OptionsUi {
+    /// The card pages' list: one option a row inside the panel, the rail on the
+    /// left and the footer's description box under the rows.
+    fn card_layout(
+        &mut self,
+        page: Page,
+        s: &Settings,
+        w: f32,
+        h: f32,
+    ) -> (Vec<Widget>, f32, f32, f32) {
+        let card = card_box(w, h);
+        let mut out = Vec::new();
+        let mut rows = ListRows::default();
+        let (top, mut bottom) = (card.content[1], card.content[1] + card.content[3]);
+        let title = Self::pack_page_title(s, page).unwrap_or_else(|| tr(Self::title(page)));
+        out.push(Widget {
+            x: card.panel[0] + 10.0,
+            y: card.panel[1] + 5.0,
+            w: 220.0,
+            h: 9.0,
+            kind: WKind::Text {
+                text: title,
+                color: CARD_TEXT,
+                centered: false,
+            },
+            list: false,
+            row: 0,
+        });
+        if page == Page::Video {
+            self.settings_search.x = card.search[0];
+            self.settings_search.y = card.search[1];
+        }
+        // The rail: the mockup's sections, each opening its page.
+        if page == Page::Mods {
+            self.card_rail = [card.rail[1]; 3];
+            let entries = [
+                (Text::literal("General"), Page::Main),
+                (tr(Self::title(Page::Mods)), Page::Mods),
+                (tr(Self::title(Page::ShaderPacks)), Page::ShaderPacks),
+                (tr(Self::title(Page::Packs)), Page::Packs),
+            ];
+            let mut y = card.rail[1] + 6.0;
+            for (label, target) in entries {
+                out.push(button(
+                    card.rail[0] + 2.0,
+                    y,
+                    card.rail[2] - 4.0,
+                    label,
+                    Act::Push(target),
+                ));
+                y += 18.0;
+            }
+        }
+        // The rows.
+        let list_start = out.len();
+        let mut y = top + 2.0 - self.scroll;
+        let right = card.content[0] + card.content[2];
+        let control_w = (card.content[2] * 0.34).clamp(56.0, 130.0);
+        let value_w = 52.0;
+        let mut rail = [0.0f32; 3];
+        let mut heading = 0;
+        for row in self.list_rows(s) {
+            rows.begin(&out, y);
+            match row {
+                Row::Header(key) => {
+                    if heading < rail.len() {
+                        rail[heading] = y;
+                    }
+                    heading += 1;
+                    let label = tr(key).with_style(&Style {
+                        bold: Some(true),
+                        ..Style::default()
+                    });
+                    out.push(Widget {
+                        x: card.content[0],
+                        y: y + 4.0,
+                        w: card.content[2],
+                        h: 9.0,
+                        kind: WKind::Text {
+                            text: label,
+                            color: CARD_HEADING,
+                            centered: false,
+                        },
+                        list: false,
+                        row: 0,
+                    });
+                    y += 18.0;
+                }
+                Row::Note(text) => {
+                    out.push(Widget {
+                        x: card.content[0],
+                        y: y + 3.0,
+                        w: card.content[2],
+                        h: 9.0,
+                        kind: WKind::Text {
+                            text: Text::literal(text),
+                            color: CARD_MUTED,
+                            centered: false,
+                        },
+                        list: false,
+                        row: 0,
+                    });
+                    y += 14.0;
+                }
+                Row::Big(opt) => {
+                    out.push(Self::card_option(s, opt, y, right, control_w, value_w));
+                    y += 22.0;
+                }
+                Row::Pair(a, b) => {
+                    out.push(Self::card_option(s, a, y, right, control_w, value_w));
+                    y += 22.0;
+                    if let Some(b) = b {
+                        out.push(Self::card_option(s, b, y, right, control_w, value_w));
+                        y += 22.0;
+                    }
+                }
+                Row::Buttons(toggle, settings) => {
+                    // A mod: its card, the switch and, when it has a page, the
+                    // small button that opens it.
+                    let mut switch = toggle;
+                    switch.x = right - 46.0;
+                    switch.y = y + 10.0;
+                    switch.w = 40.0;
+                    switch.h = 14.0;
+                    out.push(switch);
+                    if let Some(mut settings) = settings {
+                        settings.x = right - 46.0 - 26.0;
+                        settings.y = y + 10.0;
+                        settings.w = 22.0;
+                        settings.h = 14.0;
+                        out.push(settings);
+                    }
+                    y += 32.0;
+                }
+            }
+            rows.end(&mut out, y);
+        }
+        if page == Page::Video {
+            self.card_rail = rail;
+        }
+        let mut content = y + self.scroll - top + 2.0;
+        out[list_start..].iter_mut().for_each(|w| w.list = true);
+        // Narrower scrollbar column for the card's rows.
+        bottom = bottom.min(card.content[1] + card.content[3]);
+        // The footer: the folder button (Mods) or nothing, and Done.
+        if page == Page::Mods {
+            out.push(button(
+                card.footer[0],
+                card.footer[1] + 4.0,
+                110.0,
+                tr("horizon.mods.open_folder"),
+                Act::OpenModFolder,
+            ));
+        }
+        out.push(button(card.done[0], card.done[1], card.done[2], tr("gui.done"), Act::Done));
+        // Layout may change the offset (the search filters rows) or the list may
+        // shrink after a resize: correct the rows in this same frame.
+        let previous_scroll = self.scroll;
+        self.clamp_scroll(top, bottom, content);
+        for widget in &mut out {
+            if widget.list {
+                widget.y += previous_scroll - self.scroll;
+            }
+        }
+        self.row_bands = rows
+            .bands
+            .into_iter()
+            .map(|band| band.map(|y| y + previous_scroll - self.scroll))
+            .collect();
+        content = content.max(1.0);
+        (out, top, bottom, content)
+    }
+    /// An option's control inside the card's row: a slider's track, or the
+    /// pill a cycle button shows.
+    fn card_option(
+        s: &Settings,
+        opt: Opt,
+        y: f32,
+        right: f32,
+        control_w: f32,
+        value_w: f32,
+    ) -> Widget {
+        match opt.kind(s) {
+            Kind::Slider(_) => option_widget(s, opt, right - value_w - control_w, y + 4.0, control_w),
+            Kind::Cycle => option_widget(s, opt, right - 78.0, y + 4.0, 78.0),
+        }
+    }
+    /// The card behind the rows: the panel, its rail, the footer's description
+    /// box and the rule under the title.
+    fn draw_card(
+        &self,
+        s: &Settings,
+        batch: &mut HudBatch,
+        atlas: &HudAtlas,
+        w: f32,
+        h: f32,
+        page: Page,
+        top: f32,
+        bottom: f32,
+    ) {
+        let card = card_box(w, h);
+        volt_rounded(
+            batch,
+            atlas,
+            card.panel[0],
+            card.panel[1],
+            card.panel[2],
+            card.panel[3],
+            6.0,
+            rgb(0x12101a, 236),
+        );
+        volt_border(
+            batch,
+            atlas,
+            card.panel[0],
+            card.panel[1],
+            card.panel[2],
+            card.panel[3],
+            6.0,
+            rgb(0xffffff, 38),
+        );
+        // The rail's column, and the section under the cursor.
+        volt_rounded(
+            batch,
+            atlas,
+            card.panel[0] + 1.0,
+            card.panel[1] + 18.0,
+            card.rail[2] + 8.0,
+            card.panel[3] - 19.0,
+            4.0,
+            rgb(0x0b0a10, 210),
+        );
+        batch.fill(
+            atlas,
+            card.panel[0] + 8.0,
+            card.panel[1] + 17.0,
+            card.content[0] + card.content[2] - card.panel[0] - 16.0,
+            1.0,
+            rgb(0xffffff, 26),
+        );
+        // The selected rail entry's frame.
+        if page == Page::Mods {
+            let mut y = card.rail[1] + 6.0;
+            for target in [Page::Main, Page::Mods, Page::ShaderPacks, Page::Packs] {
+                let rect = [card.rail[0] + 2.0, y, card.rail[2] - 4.0, 16.0];
+                if target == page {
+                    volt_border(batch, atlas, rect[0], rect[1], rect[2], rect[3], 3.0, CARD_TEXT);
+                }
+                y += 18.0;
+            }
+        } else {
+            // The group the list is scrolled into, as the mockup's tab rail.
+            let mut lit = 0;
+            for (i, at) in self.card_rail.iter().enumerate() {
+                if *at > 0.0 && top - *at > 0.0 {
+                    lit = i;
+                }
+            }
+            let mut y = card.rail[1] + 6.0;
+            for (i, name) in ["DISPLAY", "QUALITY", "PERFORMANCE"].iter().enumerate() {
+                let rect = [card.rail[0] + 2.0, y, card.rail[2] - 4.0, 16.0];
+                if i == lit {
+                    volt_border(batch, atlas, rect[0], rect[1], rect[2], rect[3], 3.0, CARD_TEXT);
+                }
+                batch.text_styled(
+                    atlas,
+                    &Text::literal(*name),
+                    rect[0] + 6.0,
+                    rect[1] + 4.0,
+                    if i == lit { CARD_TEXT } else { CARD_MUTED },
+                    false,
+                );
+                y += 18.0;
+            }
+        }
+        // The description box, under the rows.
+        volt_rounded(
+            batch,
+            atlas,
+            card.footer[0],
+            card.footer[1],
+            (card.footer[2] - 84.0).max(40.0),
+            card.footer[3],
+            4.0,
+            rgb(0x0e0d14, 235),
+        );
+        let line = match page {
+            Page::Mods => "Turn a mod on or off. Changes apply when the world loads.".to_owned(),
+            _ => "Changes how the world is drawn. Higher settings cost frames.".to_owned(),
+        };
+        let lines = atlas.font.split(&Text::literal(line), (card.footer[2] - 96.0).max(20.0));
+        let _ = s;
+        for (i, text) in lines.iter().take(2).enumerate() {
+            batch.text_styled(
+                atlas,
+                text,
+                card.footer[0] + 6.0,
+                card.footer[1] + 5.0 + i as f32 * 9.0,
+                CARD_MUTED,
+                false,
+            );
+        }
+        let _ = (top, bottom);
+    }
+    /// One row of the card: its background, caption, value and control.
+    fn draw_card_row(
+        &self,
+        s: &Settings,
+        batch: &mut HudBatch,
+        atlas: &HudAtlas,
+        wd: &Widget,
+        hover: bool,
+        page: Page,
+        card: &CardBox,
+    ) {
+        let label = match &wd.kind {
+            WKind::Slider { label, .. } => label,
+            WKind::Button { label, .. } => label,
+            _ => return,
+        };
+        let act = match &wd.kind {
+            WKind::Button { act, active, .. } => Some((act, *active)),
+            _ => None,
+        };
+        if matches!(act, Some((Act::Done, _))) {
+            card_plate(batch, atlas, [wd.x, wd.y, wd.w, wd.h], label, hover);
+            return;
+        }
+        if matches!(act, Some((Act::OpenModFolder, _))) {
+            card_ghost(batch, atlas, [wd.x, wd.y, wd.w, wd.h], label, hover);
+            return;
+        }
+        let row = card_row_rect(page, card, wd);
+        if hover {
+            volt_rounded(batch, atlas, row[0], row[1], row[2], row[3], 4.0, rgb(0xffffff, 14));
+        }
+        let (caption, value) = volt_split(&label.plain());
+        match &wd.kind {
+            WKind::Slider { value: amount, opt, .. } => {
+                let caption = volt_fit(atlas, &caption, (wd.x - row[0] - 16.0).max(20.0));
+                batch.text_styled(
+                    atlas,
+                    &Text::literal(caption),
+                    row[0] + 8.0,
+                    row[1] + (row[3] - 8.0) / 2.0,
+                    CARD_TEXT,
+                    false,
+                );
+                // The value, right of the track.
+                let text = volt_fit(atlas, &value, 60.0);
+                let tw = atlas.font.width(&text);
+                let right = row[0] + row[2] - 8.0;
+                batch.text_styled(
+                    atlas,
+                    &Text::literal(text),
+                    right - tw,
+                    row[1] + (row[3] - 8.0) / 2.0,
+                    CARD_TEXT,
+                    false,
+                );
+                let position = self.slider_shown(*opt, *amount).clamp(0.0, 1.0);
+                let track = [wd.x, wd.y + wd.h / 2.0 - 1.0, wd.w, 2.0];
+                batch.fill(atlas, track[0], track[1], track[2], track[3], rgb(0xffffff, 46));
+                batch.fill(
+                    atlas,
+                    track[0],
+                    track[1],
+                    (track[2] * position).max(0.0),
+                    track[3],
+                    CARD_ACCENT,
+                );
+                let knob = track[0] + track[2] * position;
+                batch.fill(atlas, knob - 2.0, track[1] - 3.0, 4.0, 8.0, CARD_TEXT);
+                batch.fill(
+                    atlas,
+                    row[0] + 8.0,
+                    row[1] + row[3] - 1.0,
+                    row[2] - 16.0,
+                    1.0,
+                    rgb(0xffffff, 16),
+                );
+            }
+            WKind::Button { .. } => {
+                // A mod's switch: the label carries "Title: On".
+                if page == Page::Mods && matches!(act, Some((Act::ToggleMod(_), _))) {
+                    let count = s.mods.installed.len();
+                    let on = match act {
+                        Some((Act::ToggleMod(i), _)) if *i < count => s.mods.is_on(*i),
+                        _ => false,
+                    };
+                    let title = volt_fit(atlas, &caption, row[2] - 120.0);
+                    batch.text_styled(
+                        atlas,
+                        &Text::literal(title),
+                        row[0] + 34.0,
+                        row[1] + 5.0,
+                        CARD_TEXT,
+                        false,
+                    );
+                    let description = match act {
+                        Some((Act::ToggleMod(i), _)) if *i < count => {
+                            let installed = &s.mods.installed[*i];
+                            let mut line = installed.description.clone();
+                            if line.is_empty() {
+                                line = installed.id.clone();
+                            }
+                            if installed.dev {
+                                line = format!("{line} (dev)");
+                            }
+                            if installed.problem.is_some() {
+                                line = format!("{line} - stopped");
+                            }
+                            volt_fit(atlas, &line, row[2] - 130.0)
+                        }
+                        _ => String::new(),
+                    };
+                    batch.text_styled(
+                        atlas,
+                        &Text::literal(description),
+                        row[0] + 34.0,
+                        row[1] + 16.0,
+                        CARD_MUTED,
+                        false,
+                    );
+                    // The mod's own square: its index in the accent's shades.
+                    let shade = match act {
+                        Some((Act::ToggleMod(i), _)) => (*i % 4) as u32,
+                        _ => 0,
+                    };
+                    let colors = [
+                        rgb(0x8b6cff, 255),
+                        rgb(0x4fa8ff, 255),
+                        rgb(0xff6e9c, 255),
+                        rgb(0x57d8a0, 255),
+                    ];
+                    volt_rounded(
+                        batch,
+                        atlas,
+                        row[0] + 6.0,
+                        row[1] + 8.0,
+                        18.0,
+                        18.0,
+                        4.0,
+                        colors[shade as usize],
+                    );
+                    card_switch(
+                        batch,
+                        atlas,
+                        [wd.x, wd.y, wd.w, wd.h],
+                        on,
+                        hover,
+                    );
+                    return;
+                }
+                if matches!(act, Some((Act::ModSettings(_), _))) {
+                    card_pill(batch, atlas, [wd.x, wd.y, wd.w, wd.h], "...", hover);
+                    return;
+                }
+                let caption = volt_fit(atlas, &caption, (row[2] - 96.0).max(20.0));
+                batch.text_styled(
+                    atlas,
+                    &Text::literal(caption),
+                    row[0] + 8.0,
+                    row[1] + (row[3] - 8.0) / 2.0,
+                    CARD_TEXT,
+                    false,
+                );
+                card_pill(batch, atlas, [wd.x, wd.y, wd.w, wd.h], &value, hover);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// A quiet button: the mockups' "Open mods folder".
+fn card_ghost(batch: &mut HudBatch, atlas: &HudAtlas, rect: [f32; 4], label: &Text, hover: bool) {
+    if hover {
+        batch.fill(atlas, rect[0], rect[1], rect[2], rect[3], rgb(0xffffff, 14));
+    }
+    batch.text_styled(
+        atlas,
+        label,
+        rect[0] + 4.0,
+        rect[1] + (rect[3] - 8.0) / 2.0,
+        if hover { CARD_TEXT } else { CARD_MUTED },
+        false,
+    );
 }
 
 #[cfg(test)]
@@ -7131,7 +7967,7 @@ mod tests {
     }
 
     #[test]
-    fn native_mod_without_settings_has_only_a_full_width_toggle() {
+    fn native_mod_without_settings_has_only_its_switch() {
         let atlas = atlas();
         let mut s = Settings::default();
         let mut ui = OptionsUi::default();
@@ -7165,7 +8001,8 @@ mod tests {
                 )
             })
             .unwrap();
-        assert_eq!(toggle.w, 310.0);
+        // The card's rows put the mod's switch at the right of its row.
+        assert_eq!(toggle.w, 40.0);
         let events = ui.click(
             &mut s,
             &atlas,
