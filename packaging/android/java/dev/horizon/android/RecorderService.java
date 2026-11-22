@@ -26,6 +26,8 @@ import android.media.projection.MediaProjectionManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
+import android.os.Handler;
+import android.os.HandlerThread;
 import android.os.ParcelFileDescriptor;
 import android.provider.MediaStore;
 import android.view.Surface;
@@ -61,6 +63,11 @@ public final class RecorderService extends Service {
     }
 
     static volatile RecorderService current;
+
+    /// Everything MediaProjection and MediaRecorder do here needs a Looper, and the
+    /// service's own threads have none: one looper thread carries the whole capture.
+    private HandlerThread worker;
+    private Handler workerHandler;
 
     private static final String CHANNEL = "volt_recording";
     private static final int NOTIFICATION_ID = 4610;
@@ -105,23 +112,33 @@ public final class RecorderService extends Service {
     public void onCreate() {
         super.onCreate();
         current = this;
+        worker = new HandlerThread("Volt recorder");
+        worker.start();
+        workerHandler = new Handler(worker.getLooper());
+    }
+
+    @Override
+    public void onDestroy() {
+        current = null;
+        if (worker != null) {
+            worker.quitSafely();
+            worker = null;
+            workerHandler = null;
+        }
+        super.onDestroy();
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         startForegroundNotice();
-        if (recorder == null && !stopping) {
+        if (recorder == null && !stopping && workerHandler != null) {
             final RecorderService self = this;
-            Thread setup =
-                    new Thread(
-                            new Runnable() {
-                                public void run() {
-                                    self.begin();
-                                }
-                            },
-                            "Volt recorder");
-            setup.setPriority(Thread.NORM_PRIORITY);
-            setup.start();
+            workerHandler.post(
+                    new Runnable() {
+                        public void run() {
+                            self.begin();
+                        }
+                    });
         }
         return START_NOT_STICKY;
     }
@@ -197,7 +214,7 @@ public final class RecorderService extends Service {
                             stopRecording("the system ended screen capture");
                         }
                     };
-            projection.registerCallback(projectionCallback, null);
+            projection.registerCallback(projectionCallback, workerHandler);
 
             audioMode = ScreenRecorder.audioMode;
             frames = Math.max(15, Math.min(165, ScreenRecorder.fps));
@@ -281,7 +298,7 @@ public final class RecorderService extends Service {
                             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                             surface,
                             null,
-                            null);
+                            workerHandler);
             if (audioMode == 2) {
                 audio = new AudioCapture(projection, getCacheDir());
                 audio.start();
@@ -415,15 +432,15 @@ public final class RecorderService extends Service {
         stopping = true;
         ScreenRecorder.state = "stopping";
         final String note = reason;
-        Thread finish =
-                new Thread(
-                        new Runnable() {
-                            public void run() {
-                                RecorderService.this.finish(note);
-                            }
-                        },
-                        "Volt recorder finish");
-        finish.start();
+        if (workerHandler == null) {
+            return;
+        }
+        workerHandler.post(
+                new Runnable() {
+                    public void run() {
+                        RecorderService.this.finish(note);
+                    }
+                });
     }
 
     private void finish(String reason) {
