@@ -1447,7 +1447,7 @@ impl Launcher {
                     format!("{done_mib:.1} / {total_mib:.1} MiB")
                 } else { format!("Step {} / 6", current + 1) };
                 let stage_text = match progress.stage {
-                    InstallStage::Download => "Downloading Java Edition 26.3 client.jar",
+                    InstallStage::Download => "Downloading game resources and sound",
                     other => other.label(),
                 };
                 draw_my3_progress_view(
@@ -1463,12 +1463,12 @@ impl Launcher {
                     &if total_mib > 0.0 { self.install_transfer.eta_label(done_mib, total_mib) } else { "ETA unavailable".into() },
                     current,
                     &[
-                        "Manifest",
                         "Metadata",
-                        "Client JAR",
-                        "Verify",
+                        "Download",
                         "Extract",
-                        "Ready",
+                        "World data",
+                        "Controls",
+                        "Finalize",
                     ],
                     smooth_overall,
                     self.anim.shimmer_phase,
