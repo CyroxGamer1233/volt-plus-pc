@@ -13,6 +13,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: volt-plus-${{ github.ref }}
   cancel-in-progress: true
@@ -79,21 +80,6 @@ jobs:
         with:
           distribution: temurin
           java-version: '25'
-      - name: Verify release signing identity
-        run: |
-          python3 - <<'PY'
-          import hashlib, os, subprocess
-          expected = 'b83e95a3ff2ff82509300f132506d61b1ca3572a61e80b8588f8be815f7b9b05'
-          cert = subprocess.check_output([
-              'keytool', '-exportcert', '-keystore', os.environ['HORIZON_ANDROID_KEYSTORE'],
-              '-alias', os.environ['HORIZON_ANDROID_KEY_ALIAS'],
-              '-storepass:env', 'HORIZON_ANDROID_KEYSTORE_PASSWORD',
-          ])
-          actual = hashlib.sha256(cert).hexdigest()
-          print(f'Release certificate SHA-256: {actual}', flush=True)
-          if actual != expected:
-              raise SystemExit('Release signing certificate does not match the expected Volt Plus certificate')
-          PY
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
         with:
           gradle-version: '8.14'
@@ -115,6 +101,55 @@ jobs:
             x86_64) target=x86_64-linux-android ;;
           esac
           rustup target add "$target"
+      - name: Compare signing identity and version with a previous APK
+        if: github.ref == 'refs/heads/arena/8ca21133-volt-plus'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, re, subprocess, tempfile
+          from pathlib import Path
+          cert = subprocess.check_output([
+              'keytool', '-exportcert', '-keystore', os.environ['HORIZON_ANDROID_KEYSTORE'],
+              '-alias', os.environ['HORIZON_ANDROID_KEY_ALIAS'],
+              '-storepass:env', 'HORIZON_ANDROID_KEYSTORE_PASSWORD',
+          ])
+          expected = hashlib.sha256(cert).hexdigest()
+          tools = Path(os.environ['ANDROID_HOME']) / 'build-tools/35.0.0'
+          runs = json.loads(subprocess.check_output([
+              'gh', 'run', 'list', '--workflow', 'volt-plus.yml', '--status', 'success',
+              '--limit', '50', '--json', 'databaseId',
+          ], text=True))
+          with tempfile.TemporaryDirectory() as directory:
+              previous = None
+              for run in runs:
+                  result = subprocess.run([
+                      'gh', 'run', 'download', str(run['databaseId']), '--pattern',
+                      'volt-plus-*-arm64-v8a', '--dir', directory,
+                  ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                  apks = list(Path(directory).rglob('*.apk'))
+                  if result.returncode == 0 and len(apks) == 1:
+                      previous = apks[0]
+                      print(f"Comparing against successful run {run['databaseId']}", flush=True)
+                      break
+              if previous is None:
+                  raise SystemExit('No previous successful ARM64 APK artifact available for update verification')
+              output = subprocess.check_output([
+                  'java', '-jar', str(tools / 'lib/apksigner.jar'), 'verify', '--print-certs', str(previous),
+              ], text=True)
+              digests = re.findall(r'^Signer #\d+ certificate SHA-256 digest: ([0-9a-fA-F]+)$', output, re.MULTILINE)
+              if len(digests) != 1 or digests[0].lower() != expected:
+                  raise SystemExit('CI release key does not match the previous APK signing certificate')
+              badging = subprocess.check_output([str(tools / 'aapt'), 'dump', 'badging', str(previous)], text=True)
+              package = re.search(r"^package: name='([^']+)' versionCode='(\d+)'", badging, re.MULTILINE)
+              next_code = 2026112100 + int(os.environ['GITHUB_RUN_NUMBER'])
+              if not package or package.group(1) != 'vp.net.voltplus' or int(package.group(2)) >= next_code:
+                  raise SystemExit('Previous APK package or version code is incompatible with this update')
+              print(f'Previous version code: {package.group(2)}; new version code: {next_code}', flush=True)
+              print(f'Release certificate SHA-256: {expected}', flush=True)
+          with open(os.environ['GITHUB_ENV'], 'a') as env:
+              env.write(f'EXPECTED_APK_CERT_SHA256={expected}\n')
+          PY
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
@@ -140,13 +175,14 @@ jobs:
             --ndk-version 28.2.13676358 --build-tools-version 35.0.0 \
             --release-version-code "$((2026112100 + GITHUB_RUN_NUMBER))" 2>&1 | tee "$RUNNER_TEMP/volt-build.log"
       - name: Verify APK signing certificate
+        if: github.ref == 'refs/heads/arena/8ca21133-volt-plus'
         env:
           ABI: ${{ matrix.abi }}
         run: |
           python3 - <<'PY'
           import os, re, subprocess
           from pathlib import Path
-          expected = 'b83e95a3ff2ff82509300f132506d61b1ca3572a61e80b8588f8be815f7b9b05'
+          expected = os.environ['EXPECTED_APK_CERT_SHA256']
           apk = Path('.local/android/apk') / os.environ['ABI'] / 'horizon-android-public.apk'
           signer = Path(os.environ['ANDROID_HOME']) / 'build-tools/35.0.0/lib/apksigner.jar'
           output = subprocess.check_output(['java', '-jar', str(signer), 'verify', '--verbose', '--print-certs', str(apk)], text=True)
