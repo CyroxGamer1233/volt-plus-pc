@@ -24,7 +24,7 @@ jobs:
         working-directory: tests/control_engine_build
         run: |
           set -o pipefail
-          gradle :layer:assembleDebug --stacktrace 2>&1 | tee "$RUNNER_TEMP/controls-build.log"
+          gradle :layer:assembleDebug :layer:testDebugUnitTest --stacktrace 2>&1 | tee "$RUNNER_TEMP/controls-build.log"
       - name: Summarize failures
         if: failure()
         run: |
