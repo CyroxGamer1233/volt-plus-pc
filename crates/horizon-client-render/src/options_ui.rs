@@ -6559,6 +6559,10 @@ impl OptionsUi {
             if setting.item.slider(s).is_some() {
                 let track_x = rect[0] + rect[2] * 0.45;
                 let width = (rect[0] + rect[2] - 7.0 - track_x).max(1.0);
+                // A press on the caption leaves the value alone: only the track takes it.
+                if x < track_x {
+                    return vec![Event::ButtonClick];
+                }
                 setting
                     .item
                     .set_slider(s, ((x - track_x) / width).clamp(0.0, 1.0));
