@@ -33,7 +33,7 @@ jobs:
           target: google_apis
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           disable-animations: true
-          script: cd tests/control_engine_build && set -o pipefail && gradle :layer:connectedDebugAndroidTest --stacktrace 2>&1 | tee "$RUNNER_TEMP/studio-emulator.log"
+          script: bash -c 'set -o pipefail; cd tests/control_engine_build && gradle :layer:connectedDebugAndroidTest --stacktrace 2>&1 | tee "$RUNNER_TEMP/studio-emulator.log"'
       - name: Summarize test failures
         if: failure()
         run: |
