@@ -4066,7 +4066,6 @@ impl OptionsUi {
         let restyled = matches!(
             page,
             Page::Horizon
-                | Page::Mods
                 | Page::NativeMod(_)
                 | Page::Graphics
                 | Page::GraphicsAdvanced
@@ -5937,24 +5936,33 @@ fn volt_geometry(w: f32, h: f32) -> VoltGeometry {
         tabs.push((which, [sidebar[0] + 4.0, y, sidebar[2] - 8.0, 16.0]));
         y += 18.0;
     }
-    // The section under the tabs, and the plate under it.
-    let interface_y = y + 10.0;
-    let mut interface = Vec::new();
-    let mut iy = interface_y + 12.0;
-    for (page, label) in [
-        (Page::Video, "HUD"),
-        (Page::Controls, "Controls"),
-        (Page::Sound, "Audio"),
-    ] {
-        interface.push((page, label, [sidebar[0] + 4.0, iy, sidebar[2] - 8.0, 15.0]));
-        iy += 17.0;
-    }
     let done = [
         sidebar[0] + 6.0,
         sidebar[1] + sidebar[3] - 28.0,
         sidebar[2] - 12.0,
         22.0,
     ];
+    // The Interface section takes the room the tabs leave above the plate; a
+    // short sidebar shows only the entries that fit.
+    let entries = [
+        (Page::Video, "HUD"),
+        (Page::Controls, "Controls"),
+        (Page::Sound, "Audio"),
+    ];
+    let room = (done[1] - 8.0 - (y + 4.0)).max(0.0);
+    let fit = ((room - 12.0) / 17.0).floor().max(0.0) as usize;
+    let fit = fit.min(entries.len());
+    let mut interface = Vec::new();
+    let interface_y = if fit == 0 {
+        y
+    } else {
+        done[1] - 8.0 - (12.0 + 17.0 * fit as f32)
+    };
+    let mut iy = interface_y + 12.0;
+    for (page, label) in entries.into_iter().take(fit) {
+        interface.push((page, label, [sidebar[0] + 4.0, iy, sidebar[2] - 8.0, 15.0]));
+        iy += 17.0;
+    }
     let list_top = panel[1] + 22.0;
     let list_bottom = (panel[1] + panel[3] - 40.0).max(list_top + 30.0);
     let tip = [
@@ -6323,14 +6331,16 @@ impl OptionsUi {
             );
         }
         // The Interface section: the pages the mockup lists under the tabs.
-        batch.text_styled(
-            atlas,
-            &Text::literal(lang::get("Interface")),
-            geo.sidebar[0] + 8.0,
-            geo.interface_y,
-            rgb(0x7f7c8c, 255),
-            false,
-        );
+        if !geo.interface.is_empty() {
+            batch.text_styled(
+                atlas,
+                &Text::literal(lang::get("Interface")),
+                geo.sidebar[0] + 8.0,
+                geo.interface_y,
+                rgb(0x7f7c8c, 255),
+                false,
+            );
+        }
         for (page, label, rect) in &geo.interface {
             let over = ui::hovered(cursor, rect[0], rect[1], rect[2], rect[3]);
             if over {
@@ -6955,6 +6965,24 @@ impl OptionsUi {
         if page == Page::Video {
             self.settings_search.x = card.search[0];
             self.settings_search.y = card.search[1];
+        }
+        // The mockup's counter: how many mods are on, of how many are installed.
+        if page == Page::Mods {
+            let total = s.mods.installed.len();
+            let on = (0..total).filter(|i| s.mods.is_on(*i)).count();
+            out.push(Widget {
+                x: card.panel[0] + card.panel[2] - 112.0,
+                y: card.panel[1] + 5.0,
+                w: 102.0,
+                h: 9.0,
+                kind: WKind::Text {
+                    text: Text::literal(format!("{on} / {total} installed")),
+                    color: CARD_HEADING,
+                    centered: true,
+                },
+                list: false,
+                row: 0,
+            });
         }
         // The rail: the mockup's sections, each opening its page.
         if page == Page::Mods {
