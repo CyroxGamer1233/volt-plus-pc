@@ -3,7 +3,7 @@ run-name: Volt Plus · ${{ github.sha }}
 
 on:
   push:
-    branches: [android, arena/e973ac10-volt-plus, arena/d4e71eda-volt-plus]
+    branches: [android, arena/e973ac10-volt-plus, arena/d4e71eda-volt-plus, arena/8ca21133-volt-plus]
   workflow_dispatch:
     inputs:
       all_abis:
@@ -20,7 +20,7 @@ concurrency:
 jobs:
   build:
     # Only trusted branches can use the permanent signing identity; never PRs.
-    if: (github.ref == 'refs/heads/android' || github.ref == 'refs/heads/arena/e973ac10-volt-plus' || github.ref == 'refs/heads/arena/d4e71eda-volt-plus') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    if: (github.ref == 'refs/heads/android' || github.ref == 'refs/heads/arena/e973ac10-volt-plus' || github.ref == 'refs/heads/arena/d4e71eda-volt-plus' || github.ref == 'refs/heads/arena/8ca21133-volt-plus') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-24.04
     timeout-minutes: 150
     strategy:
@@ -79,6 +79,21 @@ jobs:
         with:
           distribution: temurin
           java-version: '25'
+      - name: Verify release signing identity
+        run: |
+          python3 - <<'PY'
+          import hashlib, os, subprocess
+          expected = 'b83e95a3ff2ff82509300f132506d61b1ca3572a61e80b8588f8be815f7b9b05'
+          cert = subprocess.check_output([
+              'keytool', '-exportcert', '-keystore', os.environ['HORIZON_ANDROID_KEYSTORE'],
+              '-alias', os.environ['HORIZON_ANDROID_KEY_ALIAS'],
+              '-storepass:env', 'HORIZON_ANDROID_KEYSTORE_PASSWORD',
+          ])
+          actual = hashlib.sha256(cert).hexdigest()
+          print(f'Release certificate SHA-256: {actual}', flush=True)
+          if actual != expected:
+              raise SystemExit('Release signing certificate does not match the expected Volt Plus certificate')
+          PY
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
         with:
           gradle-version: '8.14'
@@ -124,6 +139,22 @@ jobs:
             --sdk "$ANDROID_HOME" --java-home "${JAVA_HOME_17_X64:-$JAVA_HOME}" --gradle "$(command -v gradle)" \
             --ndk-version 28.2.13676358 --build-tools-version 35.0.0 \
             --release-version-code "$((2026112100 + GITHUB_RUN_NUMBER))" 2>&1 | tee "$RUNNER_TEMP/volt-build.log"
+      - name: Verify APK signing certificate
+        env:
+          ABI: ${{ matrix.abi }}
+        run: |
+          python3 - <<'PY'
+          import os, re, subprocess
+          from pathlib import Path
+          expected = 'b83e95a3ff2ff82509300f132506d61b1ca3572a61e80b8588f8be815f7b9b05'
+          apk = Path('.local/android/apk') / os.environ['ABI'] / 'horizon-android-public.apk'
+          signer = Path(os.environ['ANDROID_HOME']) / 'build-tools/35.0.0/lib/apksigner.jar'
+          output = subprocess.check_output(['java', '-jar', str(signer), 'verify', '--verbose', '--print-certs', str(apk)], text=True)
+          print(output, flush=True)
+          digests = re.findall(r'^Signer #\d+ certificate SHA-256 digest: ([0-9a-fA-F]+)$', output, re.MULTILINE)
+          if len(digests) != 1 or digests[0].lower() != expected:
+              raise SystemExit('APK signing certificate does not match the expected Volt Plus certificate')
+          PY
       - name: Summarize compiler errors without credentials
         if: failure()
         run: |
