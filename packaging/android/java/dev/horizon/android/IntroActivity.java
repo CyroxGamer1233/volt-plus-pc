@@ -58,6 +58,11 @@ public final class IntroActivity extends android.app.Activity implements android
                 if (width > 0 && height > 0) { videoWidth = width; videoHeight = height; fitVideo(); }
             });
             player.setOnPreparedListener(mp -> { prepared = true; if (resumed && !transitioning) mp.start(); });
+            player.setOnInfoListener((mp, what, extra) -> {
+                if (what == android.media.MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START)
+                    android.util.Log.i("VoltIntro", "Intro video rendering started");
+                return false;
+            });
             player.setOnCompletionListener(mp -> openLauncher());
             player.setOnErrorListener((mp, what, extra) -> {
                 android.util.Log.e("VoltIntro", "Video playback failed: " + what + ", " + extra);

@@ -11,7 +11,7 @@ import tempfile
 import time
 import zipfile
 
-from PIL import Image
+from PIL import Image, ImageChops
 
 ROOT = Path(__file__).resolve().parents[1]
 SDK = Path(os.environ['ANDROID_HOME'])
@@ -65,11 +65,16 @@ def main():
             '-alias', 'test', '-keyalg', 'RSA', '-validity', '1', '-dname', 'CN=Emulator Test')
         run(TOOLS / 'apksigner', 'sign', '--ks', keystore, '--ks-pass', 'pass:android', aligned)
         run('adb', 'install', '-r', aligned)
+        run('adb', 'logcat', '-c')
         run('adb', 'shell', 'am', 'start', '-W', '-n', 'vp.net.voltplus.introtest/dev.horizon.android.IntroActivity')
         # Frames at several points avoid racing the first black frame or codec preparation.
         seen_video = False
+        rendering_started = False
+        bright_frames = []
         for i in range(12):
             time.sleep(0.38)
+            logs = subprocess.check_output(['adb', 'logcat', '-d', '-s', 'VoltIntro:I'], text=True)
+            rendering_started |= 'Intro video rendering started' in logs
             result = subprocess.run(['adb', 'exec-out', 'screencap', '-p'], capture_output=True, check=True)
             image_path = t / f'frame-{i}.png'
             image_path.write_bytes(result.stdout)
@@ -80,10 +85,19 @@ def main():
                 bright = sum(1 for r, g, b in center.getdata() if r > 150 and g > 150 and b > 150)
                 ratio = bright / (center.width * center.height)
                 print(f'Frame {i}: {w}x{h}, bright center fraction {ratio:.4f}', flush=True)
-                seen_video |= ratio > 0.01
-        if not seen_video:
+                if rendering_started and ratio > 0.01:
+                    seen_video = True
+                    bright_frames.append(center.resize((160, 90)))
+        # The default system splash icon is static. Require multiple bright,
+        # changing decoded frames so that it cannot make this test pass.
+        animated = any(
+            sum(1 for pixel in ImageChops.difference(a, b).convert('L').getdata() if pixel > 20)
+            > 160 * 90 * 0.01
+            for i, a in enumerate(bright_frames) for b in bright_frames[i + 1:]
+        )
+        if not rendering_started or not seen_video or not animated:
             run('adb', 'logcat', '-d', '-s', 'VoltIntro:*', 'MediaPlayer:*')
-            raise SystemExit('No bright intro-logo pixels were visible on the emulator')
+            raise SystemExit('No changing decoded intro-logo frames were visible on the emulator')
         time.sleep(5)
         activity = subprocess.check_output(['adb', 'shell', 'dumpsys', 'activity', 'activities'], text=True)
         if 'dev.horizon.android.HorizonActivity' not in activity:
