@@ -4128,9 +4128,9 @@ impl TouchUi {
                 draw_toggle_row(
                     &mut ui,
                     cells.overlay[1],
-                    "Hide Controls While Recording",
-                    "Record raw gameplay; tap the floating button to come back and stop",
-                    Some(settings_rec.hide_overlay),
+                    "Record With Controls",
+                    "Off records raw gameplay: the HUD and the touch controls hide while it records",
+                    Some(settings_rec.record_controls),
                     None,
                 );
 

@@ -1773,6 +1773,8 @@ pub struct OptionsUi {
     /// The list's rows as last laid out: each row's top and bottom (GUI
     /// pixels), for the narration's row under the mouse.
     row_bands: Vec<[f32; 2]>,
+    /// Volt+ Settings: its tab, the panel's scroll and the motion between tabs.
+    volt: VoltState,
 }
 impl Default for OptionsUi {
     fn default() -> Self {
@@ -1817,6 +1819,7 @@ impl Default for OptionsUi {
             agent_status: Vec::new(),
             focus: None,
             can_change_value: false,
+            volt: VoltState::default(),
             size: (427.0, 240.0),
             framebuffer: [1280, 720],
             split_guest: false,
@@ -2241,7 +2244,10 @@ impl OptionsUi {
     }
     fn settings_search_active(&self) -> bool {
         self.settings_search.focused
-            && matches!(self.page(), Page::Video | Page::Controls | Page::KeyBinds)
+            && matches!(
+                self.page(),
+                Page::Video | Page::Controls | Page::KeyBinds | Page::Horizon
+            )
     }
     #[cfg(target_os = "android")]
     pub fn android_edit_value(&mut self, atlas: &HudAtlas) -> String {
@@ -2380,6 +2386,12 @@ impl OptionsUi {
         self.focus = None;
         self.can_change_value = false;
         if matches!(page, Page::Video | Page::Controls | Page::KeyBinds) {
+            self.settings_search.set_value("");
+            self.settings_search.focused = false;
+        }
+        if page == Page::Horizon {
+            // The reference screen opens on General, at its top.
+            self.volt = VoltState::default();
             self.settings_search.set_value("");
             self.settings_search.focused = false;
         }
@@ -2582,45 +2594,9 @@ impl OptionsUi {
                 flush(&mut rows, &mut section);
                 rows
             }
-            Page::Horizon => {
-                // Two to a row, as vanilla's OptionsList.addSmall lays out
-                // buttons; each opens a page built from vanilla's widgets.
-                let open =
-                    |key: &str, page: Page| button(0.0, 0.0, 150.0, tr(key), Act::Push(page));
-                vec![
-                    Row::Buttons(
-                        open("horizon.pages.open.graphics", Page::Graphics),
-                        Some(open(
-                            "horizon.pages.open.graphics_advanced",
-                            Page::GraphicsAdvanced,
-                        )),
-                    ),
-                    Row::Buttons(
-                        open("horizon.pages.open.shader_packs", Page::ShaderPacks),
-                        Some(open("horizon.pages.open.controller", Page::Controller)),
-                    ),
-                    Row::Buttons(
-                        open("horizon.pages.open.extras", Page::Extras),
-                        Some(open("horizon.pages.open.mods", Page::Mods)),
-                    ),
-                    // No AI hides the AI Agent page and everything AI.
-                    Row::Buttons(
-                        self.extra_button(s, crate::extras::Item::DiscordPresence),
-                        Some(if s.extras.no_ai {
-                            self.extra_button(s, crate::extras::Item::NoAi)
-                        } else {
-                            open("horizon.pages.open.agent", Page::Agent)
-                        }),
-                    ),
-                ]
-                .into_iter()
-                .chain(
-                    (!s.extras.no_ai).then(|| {
-                        Row::Buttons(self.extra_button(s, crate::extras::Item::NoAi), None)
-                    }),
-                )
-                .collect()
-            }
+            // Volt+ Settings draws its own sidebar and panel (`draw_volt`): no
+            // widgets of the vanilla list are laid out over it.
+            Page::Horizon => Vec::new(),
             Page::Agent => {
                 let mut rows = vec![Row::Buttons(
                     self.extra_button(s, crate::extras::Item::AgentControl),
@@ -3744,6 +3720,10 @@ impl OptionsUi {
                 .draw(batch, atlas, cursor, self.in_world, self.pad_style);
             return;
         }
+        if self.page() == Page::Horizon {
+            self.draw_volt(s, batch, atlas, cursor);
+            return;
+        }
         if self.page() == Page::Packs {
             self.watch_data_packs(atlas, (w, h));
             ui::menu_background(batch, atlas, 0.0, 0.0, w, h, self.in_world);
@@ -4321,6 +4301,11 @@ impl OptionsUi {
             }
             return events;
         }
+        if self.page() == Page::Horizon {
+            self.size = size;
+            self.framebuffer = framebuffer;
+            return self.volt_click(s, atlas, x, y, size, drag, right);
+        }
         if self.page() == Page::Packs {
             let mut events = Vec::new();
             if drag {
@@ -4676,15 +4661,20 @@ impl OptionsUi {
         // AbstractSliderButton suppresses the press sound and plays once on
         // release, even if the pointer has left the widget or its value stayed.
         let slider = self.dragging.take().is_some() | self.shader_dragging.take().is_some();
+        let volt_slider = self.volt.dragging.take().is_some();
         let graphics_slider = self.graphics.release();
         let calibration_slider = self.calibration.as_mut().is_some_and(|c| c.release());
-        if slider || graphics_slider || calibration_slider {
+        if slider || volt_slider || graphics_slider || calibration_slider {
             vec![Event::ButtonClick, Event::Changed]
         } else {
             Vec::new()
         }
     }
     pub fn scroll(&mut self, s: &Settings, size: (f32, f32), amount: f32) {
+        if self.page() == Page::Horizon {
+            self.volt_scroll(s, size, amount);
+            return;
+        }
         let (_, top, bottom, content) = self.layout(s, size.0, size.1);
         self.scroll -= amount * 18.0;
         self.clamp_scroll(top, bottom, content);
@@ -5590,6 +5580,994 @@ impl OptionsUi {
                 }
                 _ => {}
             }
+        }
+        Vec::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Volt+ Settings: the reference screen's sidebar beside one scrolling panel.
+// ---------------------------------------------------------------------------
+
+/// A tab of the Volt+ Settings sidebar, in the reference screen's order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum VoltTab {
+    General,
+    Quality,
+    Performance,
+    Advanced,
+    Hdr,
+}
+
+impl VoltTab {
+    const ALL: [VoltTab; 5] = [
+        VoltTab::General,
+        VoltTab::Quality,
+        VoltTab::Performance,
+        VoltTab::Advanced,
+        VoltTab::Hdr,
+    ];
+    fn label(self) -> &'static str {
+        match self {
+            VoltTab::General => "General",
+            VoltTab::Quality => "Quality",
+            VoltTab::Performance => "Performance",
+            VoltTab::Advanced => "Advanced",
+            VoltTab::Hdr => "HDR",
+        }
+    }
+    /// The panel's lines: group headings and the settings under them.
+    fn rows(self) -> Vec<VoltRow> {
+        use crate::{
+            graphics_style::Cost,
+            graphics_ui::{H, Item, Setting},
+        };
+        let v = |opt: Opt, cost: Cost, text: &'static str| {
+            VoltRow::Setting(Setting {
+                item: Item::Vanilla(opt),
+                cost,
+                text,
+            })
+        };
+        let h = |option: H, cost: Cost, text: &'static str| {
+            VoltRow::Setting(Setting {
+                item: Item::Horizon(option),
+                cost,
+                text,
+            })
+        };
+        match self {
+            VoltTab::General => vec![
+                VoltRow::Header("Preset & Scale"),
+                h(
+                    H::Preset,
+                    Cost::None,
+                    "Sets the options below together. Changing one makes it Custom.",
+                ),
+                h(
+                    H::ResolutionScale,
+                    Cost::High,
+                    "Renders the world below the screen's size, then scales it up: the biggest saving.",
+                ),
+                v(
+                    Opt::RenderDistance,
+                    Cost::High,
+                    "Full-detail terrain range. LOD Distance can extend local worlds farther.",
+                ),
+                v(
+                    Opt::SimulationDistance,
+                    Cost::Medium,
+                    "How far mobs, crops and machines keep working. CPU time.",
+                ),
+                v(
+                    Opt::GuiScale,
+                    Cost::None,
+                    "Size of menus, inventory and the HUD.",
+                ),
+                VoltRow::Header("Display & Frame Rate"),
+                v(
+                    Opt::Fov,
+                    Cost::Low,
+                    "Field of view. Wider shows more terrain at once.",
+                ),
+                v(
+                    Opt::MaxFps,
+                    Cost::None,
+                    "Caps frames per second; a cap saves power and heat.",
+                ),
+                v(
+                    Opt::Vsync,
+                    Cost::None,
+                    "Waits for the display's refresh: no tearing, a little latency.",
+                ),
+                h(
+                    H::Overlay,
+                    Cost::None,
+                    "Shows frames per second and frame time over the world.",
+                ),
+            ],
+            VoltTab::Quality => vec![
+                VoltRow::Header("Textures"),
+                v(Opt::Mipmaps, Cost::Low, "Smoothest distance texture. Off shimmers."),
+                v(
+                    Opt::TextureFiltering,
+                    Cost::Low,
+                    "Sharpens distant textures along the view.",
+                ),
+                v(Opt::MaxAnisotropy, Cost::Low, "How far filtering reaches."),
+                h(
+                    H::ScreenshotQuality,
+                    Cost::None,
+                    "Screenshots are saved this many times the screen's size.",
+                ),
+                VoltRow::Header("World Detail"),
+                v(Opt::BiomeBlend, Cost::Low, "Blends grass and foliage colours."),
+                v(
+                    Opt::EntityDistance,
+                    Cost::Medium,
+                    "How far away mobs and items are drawn, as a share of normal.",
+                ),
+                h(
+                    H::LodDistance,
+                    Cost::Medium,
+                    "Coarse distant terrain in local worlds. Integrated GPUs stop at 128 chunks.",
+                ),
+                h(
+                    H::FarDetail,
+                    Cost::Medium,
+                    "Reduced draws far terrain coarser: faster on an integrated GPU.",
+                ),
+                v(Opt::Clouds, Cost::Low, "Draws clouds; Fancy is fuller and slower."),
+                v(Opt::CloudRange, Cost::Medium, "How far clouds reach."),
+                v(Opt::Particles, Cost::Low, "How many particles are drawn."),
+                v(
+                    Opt::SmoothLighting,
+                    Cost::Low,
+                    "Soft shadows at block edges. Off is flat and faster.",
+                ),
+                v(Opt::EntityShadows, Cost::Low, "A shadow under each mob and item."),
+                v(
+                    Opt::CutoutLeaves,
+                    Cost::None,
+                    "Leaves in fast mode are solid rather than see-through.",
+                ),
+                v(
+                    Opt::ImprovedTransparency,
+                    Cost::Medium,
+                    "Sorted translucency: glass and water look right from any angle.",
+                ),
+                h(
+                    H::AnimatedTextures,
+                    Cost::Low,
+                    "Water, fire and lava move. Off saves texture uploads.",
+                ),
+            ],
+            VoltTab::Performance => vec![
+                VoltRow::Header("Frame Rate"),
+                v(
+                    Opt::MaxFps,
+                    Cost::None,
+                    "Caps frames per second; a cap saves power and heat.",
+                ),
+                v(
+                    Opt::Vsync,
+                    Cost::None,
+                    "Waits for the display's refresh: no tearing, a little latency.",
+                ),
+                v(
+                    Opt::InactivityFps,
+                    Cost::None,
+                    "A lower cap while the window is in the background.",
+                ),
+                h(
+                    H::PresentMode,
+                    Cost::None,
+                    "How finished frames reach the display.",
+                ),
+                h(H::Pacing, Cost::None, "How evenly frame time is spent."),
+                h(
+                    H::BatteryMode,
+                    Cost::None,
+                    "Trims the frame rate and detail while on battery.",
+                ),
+                VoltRow::Header("Culling & Uploads"),
+                h(
+                    H::CaveCulling,
+                    Cost::Saves,
+                    "Skips terrain hidden behind closed sections. Off costs a lot.",
+                ),
+                h(
+                    H::EntityCulling,
+                    Cost::None,
+                    "Hides models behind opaque blocks. Entities update. Off with custom packs.",
+                ),
+                h(
+                    H::ChunkUpdates,
+                    Cost::Medium,
+                    "How many chunk meshes are rebuilt each frame.",
+                ),
+                h(
+                    H::UploadBudget,
+                    Cost::Medium,
+                    "How much mesh data reaches the GPU each frame.",
+                ),
+                h(H::Workers, Cost::None, "Threads that build chunks."),
+                v(
+                    Opt::ChunkBuilder,
+                    Cost::Low,
+                    "Which chunks are rebuilt first while you move.",
+                ),
+                VoltRow::Header("Effects"),
+                v(
+                    Opt::MenuBlur,
+                    Cost::Medium,
+                    "Blurs the world behind menus. Off is faster.",
+                ),
+                v(Opt::WeatherRadius, Cost::Medium, "How far rain and snow reach."),
+                v(Opt::ChunkFade, Cost::Low, "Chunks fade in rather than pop."),
+                h(
+                    H::ShadowCache,
+                    Cost::Saves,
+                    "Keeps light and shadows between frames.",
+                ),
+            ],
+            // Advanced and HDR are the graphics screens' own groups, in full.
+            VoltTab::Advanced => VoltTab::graphics_rows(crate::graphics_ui::Level::Advanced),
+            VoltTab::Hdr => VoltTab::graphics_rows(crate::graphics_ui::Level::Hdr),
+        }
+    }
+    /// A graphics screen's rows, as the Volt+ panel shows them.
+    fn graphics_rows(level: crate::graphics_ui::Level) -> Vec<VoltRow> {
+        let mut out = Vec::new();
+        for row in crate::graphics_ui::rows(level) {
+            out.push(match row {
+                crate::graphics_ui::Row::Header(name) => VoltRow::Header(name),
+                crate::graphics_ui::Row::Setting(setting) => VoltRow::Setting(setting),
+            });
+        }
+        out
+    }
+}
+
+/// One line of the Volt+ Settings panel.
+enum VoltRow {
+    Header(&'static str),
+    Setting(crate::graphics_ui::Setting),
+}
+
+/// The Volt+ Settings screen's state: its tab, the list's scroll, and the motion
+/// between tabs (the panel eases in, the selection's outline slides).
+struct VoltState {
+    tab: VoltTab,
+    /// When the tab last changed: the new panel's lines ease in.
+    switched: Instant,
+    /// The selected tab's outline easing from one row to the next.
+    marker_from: f32,
+    marker_to: f32,
+    marker_since: Instant,
+    scroll: f32,
+    /// The slider held down, and the track it is dragged along.
+    dragging: Option<crate::graphics_ui::Item>,
+    drag_track: (f32, f32),
+    /// The row under the pointer, for the tooltip and its highlight.
+    hovered: Option<usize>,
+}
+
+impl Default for VoltState {
+    fn default() -> Self {
+        let now = Instant::now();
+        Self {
+            tab: VoltTab::General,
+            switched: now,
+            marker_from: 0.0,
+            marker_to: 0.0,
+            marker_since: now,
+            scroll: 0.0,
+            dragging: None,
+            drag_track: (0.0, 1.0),
+            hovered: None,
+        }
+    }
+}
+
+/// Where the sidebar, the panel and its list sit, in GUI pixels.
+struct VoltGeometry {
+    sidebar: [f32; 4],
+    panel: [f32; 4],
+    search: [f32; 4],
+    tabs: Vec<(VoltTab, [f32; 4])>,
+    done: [f32; 4],
+    /// The scrolling list's top and bottom.
+    list: [f32; 2],
+    /// The description box under the list.
+    tip: [f32; 4],
+}
+
+fn volt_geometry(w: f32, h: f32) -> VoltGeometry {
+    let m = 4.0;
+    let sidebar_w = (w * 0.30).clamp(92.0, 150.0).min((w * 0.5).max(60.0));
+    let sidebar = [m, m, sidebar_w, (h - m * 2.0).max(60.0)];
+    let panel_x = sidebar[0] + sidebar[2] + m;
+    let panel = [
+        panel_x,
+        m,
+        (w - panel_x - m).max(80.0),
+        (h - m * 2.0).max(60.0),
+    ];
+    let search = [sidebar[0] + 4.0, sidebar[1] + 26.0, sidebar[2] - 8.0, 14.0];
+    let mut tabs = Vec::new();
+    let mut y = search[1] + search[3] + 6.0;
+    for which in VoltTab::ALL {
+        tabs.push((which, [sidebar[0] + 2.0, y, sidebar[2] - 4.0, 15.0]));
+        y += 17.0;
+    }
+    let done = [
+        sidebar[0] + 4.0,
+        (h - m - 20.0).max(sidebar[1]),
+        sidebar[2] - 8.0,
+        20.0,
+    ];
+    let list_top = panel[1] + 18.0;
+    let list_bottom = (panel[1] + panel[3] - 36.0).max(list_top + 30.0);
+    let tip = [
+        panel[0] + 4.0,
+        list_bottom + 4.0,
+        panel[2] - 8.0,
+        (panel[1] + panel[3] - list_bottom - 8.0).max(24.0),
+    ];
+    VoltGeometry {
+        sidebar,
+        panel,
+        search,
+        tabs,
+        done,
+        list: [list_top, list_bottom],
+        tip,
+    }
+}
+
+/// A row's height in the panel.
+fn volt_row_height(row: &VoltRow) -> f32 {
+    match row {
+        VoltRow::Header(_) => 14.0,
+        VoltRow::Setting(_) => 24.0,
+    }
+}
+
+/// Each visible row's box, and the list's content height.
+fn volt_rows_layout(
+    rows: &[VoltRow],
+    panel: [f32; 4],
+    list: [f32; 2],
+    scroll: f32,
+) -> (Vec<(usize, [f32; 4])>, f32) {
+    let mut out = Vec::new();
+    let mut y = list[0] + 2.0 - scroll;
+    let mut content = 4.0;
+    for (i, row) in rows.iter().enumerate() {
+        let height = volt_row_height(row);
+        content += height;
+        if y + height > list[0] && y < list[1] {
+            out.push((i, [panel[0] + 4.0, y, (panel[2] - 8.0).max(1.0), height]));
+        }
+        y += height;
+    }
+    (out, content)
+}
+
+/// A filled rounded box, as the reference screen's panels and plates are.
+fn volt_rounded(
+    batch: &mut HudBatch,
+    atlas: &HudAtlas,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    radius: f32,
+    color: u32,
+) {
+    if w <= 0.0 || h <= 0.0 {
+        return;
+    }
+    let r = radius.min(w / 2.0).min(h / 2.0).floor();
+    if r < 1.0 {
+        batch.fill(atlas, x, y, w, h, color);
+        return;
+    }
+    batch.fill(atlas, x, y + r, w, (h - r * 2.0).max(0.0), color);
+    let mut i = 0.0;
+    while i < r {
+        let dy = r - 1.0 - i;
+        let inset = (r - (r * r - dy * dy).max(0.0).sqrt()).floor();
+        batch.fill(atlas, x + inset, y + i, (w - inset * 2.0).max(0.0), 1.0, color);
+        batch.fill(
+            atlas,
+            x + inset,
+            y + h - 1.0 - i,
+            (w - inset * 2.0).max(0.0),
+            1.0,
+            color,
+        );
+        i += 1.0;
+    }
+}
+
+/// A 1px rounded outline: the selected tab's frame.
+fn volt_border(
+    batch: &mut HudBatch,
+    atlas: &HudAtlas,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    radius: f32,
+    color: u32,
+) {
+    if w <= 1.0 || h <= 1.0 {
+        return;
+    }
+    let r = radius.min(w / 2.0).min(h / 2.0).floor().max(0.0);
+    batch.fill(atlas, x + r, y, (w - r * 2.0).max(0.0), 1.0, color);
+    batch.fill(atlas, x + r, y + h - 1.0, (w - r * 2.0).max(0.0), 1.0, color);
+    batch.fill(atlas, x, y + r, 1.0, (h - r * 2.0).max(0.0), color);
+    batch.fill(
+        atlas,
+        x + w - 1.0,
+        y + r,
+        1.0,
+        (h - r * 2.0).max(0.0),
+        color,
+    );
+    let mut i = 0.0;
+    while i < r {
+        let dy = r - 1.0 - i;
+        let inset = (r - (r * r - dy * dy).max(0.0).sqrt()).floor();
+        batch.fill(atlas, x + inset, y + i, 1.0, 1.0, color);
+        batch.fill(atlas, x + w - 1.0 - inset, y + i, 1.0, 1.0, color);
+        batch.fill(atlas, x + inset, y + h - 1.0 - i, 1.0, 1.0, color);
+        batch.fill(atlas, x + w - 1.0 - inset, y + h - 1.0 - i, 1.0, 1.0, color);
+        i += 1.0;
+    }
+}
+
+/// `text` short enough for `max` pixels, with an ellipsis when it was cut.
+fn volt_fit(atlas: &HudAtlas, text: &str, max: f32) -> String {
+    if atlas.font.width(text) <= max {
+        return text.to_string();
+    }
+    let mut out = String::new();
+    for c in text.chars() {
+        let mut next = out.clone();
+        next.push(c);
+        if atlas.font.width(&next) > (max - 6.0).max(1.0) {
+            break;
+        }
+        out = next;
+    }
+    out.push_str("...");
+    out
+}
+
+/// `Render Distance: 12 chunks` as the reference screen's two columns.
+fn volt_split(label: &str) -> (String, String) {
+    match label.split_once(": ") {
+        Some((caption, value)) => (caption.to_string(), value.to_string()),
+        None => (label.to_string(), String::new()),
+    }
+}
+
+/// A setting's cost, as the description box's square.
+fn volt_cost_color(cost: crate::graphics_style::Cost) -> u32 {
+    let index = match cost {
+        crate::graphics_style::Cost::None => 0,
+        crate::graphics_style::Cost::Low => 1,
+        crate::graphics_style::Cost::Medium => 2,
+        crate::graphics_style::Cost::High => 3,
+        crate::graphics_style::Cost::Saves => 4,
+    };
+    crate::graphics_style::STYLE.cost_colors[index]
+}
+
+/// Motion curves: the panel's slide and the selection's glide.
+fn volt_ease(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    1.0 - (1.0 - t) * (1.0 - t) * (1.0 - t)
+}
+
+impl OptionsUi {
+    /// The panel's rows for `tab`, with the search box applied.
+    fn volt_rows(&self, s: &Settings, tab: VoltTab) -> Vec<VoltRow> {
+        let rows = tab.rows();
+        let query = self.settings_search.value.trim().to_lowercase();
+        if query.is_empty() {
+            return rows;
+        }
+        let mut out = Vec::new();
+        let mut header = None;
+        for row in rows {
+            match row {
+                VoltRow::Header(name) => header = Some(name),
+                VoltRow::Setting(setting) => {
+                    if setting.item.label(s).plain().to_lowercase().contains(&query) {
+                        if let Some(name) = header.take() {
+                            out.push(VoltRow::Header(name));
+                        }
+                        out.push(VoltRow::Setting(setting));
+                    }
+                }
+            }
+        }
+        out
+    }
+    /// The panel's scroll for a wheel or a drag over the list.
+    fn volt_scroll(&mut self, s: &Settings, size: (f32, f32), amount: f32) {
+        let geo = volt_geometry(size.0, size.1);
+        let rows = self.volt_rows(s, self.volt.tab);
+        let (_, content) = volt_rows_layout(&rows, geo.panel, geo.list, 0.0);
+        let visible = (geo.list[1] - geo.list[0]).max(1.0);
+        let max = (content - visible).max(0.0);
+        self.volt.scroll = (self.volt.scroll - amount * 18.0).clamp(0.0, max);
+    }
+    /// The selected tab's outline easing towards `target`, in GUI pixels.
+    fn volt_marker(&mut self, target: f32) -> f32 {
+        if (self.volt.marker_to - target).abs() > 0.5 {
+            self.volt.marker_from = self.volt_marker_position();
+            self.volt.marker_to = target;
+            self.volt.marker_since = Instant::now();
+        }
+        self.volt_marker_position()
+    }
+    fn volt_marker_position(&self) -> f32 {
+        let t = volt_ease(self.volt.marker_since.elapsed().as_secs_f32() / 0.18);
+        self.volt.marker_from + (self.volt.marker_to - self.volt.marker_from) * t
+    }
+    /// Volt+ Settings: the reference screen's sidebar beside one scrolling panel.
+    fn draw_volt(
+        &mut self,
+        s: &Settings,
+        batch: &mut HudBatch,
+        atlas: &HudAtlas,
+        cursor: (f32, f32),
+    ) {
+        let (w, h) = (batch.width, batch.height);
+        ui::menu_background(batch, atlas, 0.0, 0.0, w, h, self.in_world);
+        batch.fill(atlas, 0.0, 0.0, w, h, rgba(0, 0, 0, 110));
+        let geo = volt_geometry(w, h);
+        let tab = self.volt.tab;
+        let rows = self.volt_rows(s, tab);
+        let (visible, content) = volt_rows_layout(&rows, geo.panel, geo.list, self.volt.scroll);
+        let visible_h = (geo.list[1] - geo.list[0]).max(1.0);
+        let max_scroll = (content - visible_h).max(0.0);
+        if self.volt.scroll > max_scroll {
+            self.volt.scroll = max_scroll;
+        }
+        let slides = (1.0 - volt_ease(self.volt.switched.elapsed().as_secs_f32() / 0.16)) * 6.0;
+        // The panel, its tab's name and the rule under it.
+        volt_rounded(
+            batch,
+            atlas,
+            geo.panel[0],
+            geo.panel[1],
+            geo.panel[2],
+            geo.panel[3],
+            5.0,
+            rgb(0x0b0b12, 214),
+        );
+        batch.text_styled(
+            atlas,
+            &Text::literal(tab.label()),
+            geo.panel[0] + 10.0,
+            geo.panel[1] + 6.0,
+            rgb(0xffffff, 255),
+            false,
+        );
+        batch.fill(
+            atlas,
+            geo.panel[0] + 6.0,
+            geo.panel[1] + 16.0,
+            geo.panel[2] - 12.0,
+            1.0,
+            rgb(0xffffff, 26),
+        );
+        // The sidebar: its title, its section, the search box and its tabs.
+        batch.text_styled(
+            atlas,
+            &Text::literal("Volt"),
+            geo.sidebar[0] + 4.0,
+            geo.sidebar[1] + 2.0,
+            rgb(0xffffff, 255),
+            false,
+        );
+        batch.text_styled(
+            atlas,
+            &Text::literal(lang::get("Graphics")),
+            geo.sidebar[0] + 4.0,
+            geo.sidebar[1] + 13.0,
+            rgb(0x9a9aa8, 255),
+            false,
+        );
+        let mut search = self.settings_search.clone();
+        search.x = geo.search[0];
+        search.y = geo.search[1];
+        search.width = geo.search[2];
+        search.height = geo.search[3];
+        search.draw(batch, atlas, None);
+        if search.value.is_empty() && !search.focused {
+            batch.text_styled(
+                atlas,
+                &Text::literal(lang::get("Search options")),
+                geo.search[0] + 4.0,
+                geo.search[1] + 3.0,
+                rgb(0x8a8a96, 255),
+                false,
+            );
+        }
+        self.settings_search = search;
+        // The selected tab's outline, sliding from the tab it was on.
+        let target = geo
+            .tabs
+            .iter()
+            .find(|(which, _)| *which == tab)
+            .map(|(_, rect)| rect[1])
+            .unwrap_or(0.0);
+        let marker = self.volt_marker(target);
+        if let Some((_, rect)) = geo.tabs.iter().find(|(which, _)| *which == tab) {
+            volt_border(
+                batch,
+                atlas,
+                rect[0],
+                marker,
+                rect[2],
+                rect[3],
+                3.0,
+                rgb(0xffffff, 235),
+            );
+        }
+        for (which, rect) in &geo.tabs {
+            let selected = *which == tab;
+            if !selected && ui::hovered(cursor, rect[0], rect[1], rect[2], rect[3]) {
+                volt_rounded(
+                    batch,
+                    atlas,
+                    rect[0],
+                    rect[1],
+                    rect[2],
+                    rect[3],
+                    3.0,
+                    rgb(0xffffff, 24),
+                );
+            }
+            let color = if selected {
+                rgb(0xffffff, 255)
+            } else {
+                rgb(0x9a9aa8, 255)
+            };
+            batch.text_styled(
+                atlas,
+                &Text::literal(which.label()),
+                rect[0] + 6.0,
+                rect[1] + 4.0,
+                color,
+                false,
+            );
+        }
+        // The rows, clipped to the list.
+        let start = batch.vertices.len();
+        let mut hovered = None;
+        let mut tip = None;
+        for (index, rect) in &visible {
+            let row = &rows[*index];
+            let y = rect[1] + slides;
+            let over = ui::hovered(cursor, rect[0], y, rect[2], rect[3])
+                && cursor.1 >= geo.list[0]
+                && cursor.1 < geo.list[1];
+            match row {
+                VoltRow::Header(name) => {
+                    let text = volt_fit(atlas, &lang::get(name), rect[2] - 8.0);
+                    batch.text_styled(
+                        atlas,
+                        &Text::literal(text),
+                        rect[0] + 6.0,
+                        y + 3.0,
+                        rgb(0xb9a6ff, 255),
+                        false,
+                    );
+                }
+                VoltRow::Setting(setting) => {
+                    let blocked = setting.item.blocked(s);
+                    if over {
+                        volt_rounded(
+                            batch,
+                            atlas,
+                            rect[0],
+                            y,
+                            rect[2],
+                            rect[3],
+                            3.0,
+                            rgb(0xffffff, 20),
+                        );
+                    }
+                    let (caption, value) = volt_split(&setting.item.label(s).plain());
+                    let slider = setting.item.slider(s);
+                    let value = if slider.is_none() && !value.is_empty() {
+                        format!("< {value} >")
+                    } else {
+                        value
+                    };
+                    let value_width = atlas.font.width(&value);
+                    let caption = volt_fit(atlas, &caption, (rect[2] - 24.0 - value_width).max(20.0));
+                    let color = if blocked.is_some() {
+                        rgb(0x8a8a96, 255)
+                    } else {
+                        rgb(0xffffff, 255)
+                    };
+                    batch.text_styled(
+                        atlas,
+                        &Text::literal(caption.clone()),
+                        rect[0] + 7.0,
+                        y + 3.0,
+                        color,
+                        false,
+                    );
+                    let value_x = rect[0] + rect[2] - 7.0 - value_width;
+                    batch.text_styled(
+                        atlas,
+                        &Text::literal(value),
+                        value_x,
+                        y + 3.0,
+                        rgb(0xd8d8e0, 255),
+                        false,
+                    );
+                    if let Some(position) = slider {
+                        let track_x = rect[0] + rect[2] * 0.45;
+                        let track_w = (rect[0] + rect[2] - 7.0 - track_x).max(1.0);
+                        batch.fill(atlas, track_x, y + 15.0, track_w, 2.0, rgb(0xffffff, 40));
+                        batch.fill(
+                            atlas,
+                            track_x,
+                            y + 15.0,
+                            (track_w * position).max(0.0),
+                            2.0,
+                            rgb(0x8b6cff, 235),
+                        );
+                        let knob = track_x + track_w * position;
+                        batch.fill(atlas, knob - 1.0, y + 12.0, 3.0, 8.0, rgb(0xffffff, 245));
+                    } else if over {
+                        // A cycle button's box, as the reference highlights it.
+                        volt_border(
+                            batch,
+                            atlas,
+                            value_x - 4.0,
+                            y + 2.0,
+                            value_width + 8.0,
+                            11.0,
+                            2.0,
+                            rgb(0xffffff, 220),
+                        );
+                    }
+                    if over {
+                        batch.fill(
+                            atlas,
+                            rect[0] + 4.0,
+                            y + rect[3] - 1.0,
+                            rect[2] - 8.0,
+                            1.0,
+                            rgb(0xffffff, 26),
+                        );
+                        hovered = Some(*index);
+                        tip = Some((caption, setting.cost, setting.text, blocked));
+                    }
+                }
+            }
+        }
+        batch.clip_since(
+            start,
+            geo.panel[0],
+            geo.list[0],
+            geo.panel[0] + geo.panel[2],
+            geo.list[1],
+        );
+        self.volt.hovered = hovered;
+        if max_scroll > 0.5 {
+            let track_h = geo.list[1] - geo.list[0];
+            let thumb_h = (track_h * visible_h / content.max(1.0)).max(12.0);
+            let thumb_y = geo.list[0] + (track_h - thumb_h) * (self.volt.scroll / max_scroll);
+            batch.fill(
+                atlas,
+                geo.panel[0] + geo.panel[2] - 3.0,
+                geo.list[0],
+                1.0,
+                track_h,
+                rgb(0xffffff, 22),
+            );
+            volt_rounded(
+                batch,
+                atlas,
+                geo.panel[0] + geo.panel[2] - 4.5,
+                thumb_y,
+                3.0,
+                thumb_h,
+                1.5,
+                rgb(0xffffff, 120),
+            );
+        }
+        // The hovered setting's description, in the box under the panel.
+        volt_rounded(
+            batch,
+            atlas,
+            geo.tip[0],
+            geo.tip[1],
+            geo.tip[2],
+            geo.tip[3],
+            4.0,
+            rgb(0x0b0b12, 226),
+        );
+        match tip {
+            Some((caption, cost, text, blocked)) => {
+                let y = geo.tip[1] + 5.0;
+                let caption = volt_fit(atlas, &caption, geo.tip[2] - 90.0);
+                let x = geo.tip[0] + 6.0
+                    + batch.text_styled(
+                        atlas,
+                        &Text::literal(caption),
+                        geo.tip[0] + 6.0,
+                        y,
+                        rgb(0xffffff, 255),
+                        false,
+                    );
+                batch.fill(atlas, x + 5.0, y + 3.0, 5.0, 5.0, volt_cost_color(cost));
+                batch.text_styled(
+                    atlas,
+                    &Text::literal(lang::get(cost.label())),
+                    x + 14.0,
+                    y,
+                    rgb(0xa0a0ac, 255),
+                    false,
+                );
+                let description = match blocked {
+                    Some(why) => lang::get(why),
+                    None => lang::get(text),
+                };
+                let lines = atlas.font.split(&Text::literal(description), geo.tip[2] - 12.0);
+                for (i, line) in lines.iter().take(2).enumerate() {
+                    batch.text_styled(
+                        atlas,
+                        line,
+                        geo.tip[0] + 6.0,
+                        y + 10.0 + i as f32 * 9.0,
+                        rgb(0xbcbcc6, 255),
+                        false,
+                    );
+                }
+            }
+            None => {
+                batch.text_styled(
+                    atlas,
+                    &Text::literal("Point at a setting to see what it does."),
+                    geo.tip[0] + 6.0,
+                    geo.tip[1] + 5.0,
+                    rgb(0x8a8a96, 255),
+                    false,
+                );
+            }
+        }
+        // Done: the accent plate under the sidebar.
+        let over_done = ui::hovered(cursor, geo.done[0], geo.done[1], geo.done[2], geo.done[3]);
+        volt_rounded(
+            batch,
+            atlas,
+            geo.done[0],
+            geo.done[1],
+            geo.done[2],
+            geo.done[3],
+            3.0,
+            rgb(if over_done { 0x9d80ff } else { 0x8b6cff }, 255),
+        );
+        ui::centered_text(
+            batch,
+            atlas,
+            &tr("gui.done"),
+            geo.done[0],
+            geo.done[1] + 6.0,
+            geo.done[2],
+            rgb(0xffffff, 255),
+        );
+    }
+    /// A press on the Volt+ Settings screen. The page draws its own controls, so
+    /// every press is answered here.
+    fn volt_click(
+        &mut self,
+        s: &mut Settings,
+        atlas: &HudAtlas,
+        x: f32,
+        y: f32,
+        size: (f32, f32),
+        drag: bool,
+        right: bool,
+    ) -> Vec<Event> {
+        let geo = volt_geometry(size.0, size.1);
+        // A held slider follows the pointer.
+        if let Some(item) = self.volt.dragging {
+            if drag {
+                let (left, width) = self.volt.drag_track;
+                item.set_slider(s, ((x - left) / width.max(1.0)).clamp(0.0, 1.0));
+                return vec![Event::SliderDrag];
+            }
+            self.volt.dragging = None;
+        }
+        if !drag && !right {
+            if ui::hovered((x, y), geo.search[0], geo.search[1], geo.search[2], geo.search[3]) {
+                self.settings_search.focused = true;
+                self.settings_search.click(atlas, x, false, false);
+                self.focus = Some(FocusId::Search);
+                self.can_change_value = false;
+                return vec![Event::ButtonClick];
+            }
+            for (which, rect) in &geo.tabs {
+                if ui::hovered((x, y), rect[0], rect[1], rect[2], rect[3]) {
+                    if self.volt.tab != *which {
+                        self.volt.tab = *which;
+                        self.volt.scroll = 0.0;
+                        self.volt.switched = Instant::now();
+                        self.settings_search.set_value("");
+                        self.settings_search.focused = false;
+                        self.focus = None;
+                    }
+                    return vec![Event::ButtonClick];
+                }
+            }
+            if ui::hovered((x, y), geo.done[0], geo.done[1], geo.done[2], geo.done[3]) {
+                self.settings_search.focused = false;
+                let mut events = vec![Event::ButtonClick];
+                events.extend(self.back(s));
+                return events;
+            }
+        }
+        if y < geo.list[0] || y >= geo.list[1] || right {
+            return Vec::new();
+        }
+        let rows = self.volt_rows(s, self.volt.tab);
+        let (visible, _) = volt_rows_layout(&rows, geo.panel, geo.list, self.volt.scroll);
+        for (index, rect) in &visible {
+            if !ui::hovered((x, y), rect[0], rect[1], rect[2], rect[3]) {
+                continue;
+            }
+            let row = &rows[*index];
+            let VoltRow::Setting(setting) = row else {
+                return vec![Event::ButtonClick];
+            };
+            if setting.item.blocked(s).is_some() {
+                return vec![Event::ButtonClick];
+            }
+            if matches!(
+                setting.item,
+                crate::graphics_ui::Item::Horizon(crate::graphics_ui::H::HdrSettings)
+            ) {
+                self.settings_search.focused = false;
+                self.push(Page::GraphicsHdr);
+                return vec![Event::ButtonClick];
+            }
+            if matches!(
+                setting.item,
+                crate::graphics_ui::Item::Horizon(crate::graphics_ui::H::HdrCalibrate)
+            ) {
+                self.settings_search.focused = false;
+                self.calibration = Some(crate::hdr_calibration::Calibration::new(s));
+                self.push(Page::HdrCalibration);
+                return vec![Event::ButtonClick];
+            }
+            if setting.item.slider(s).is_some() {
+                let track_x = rect[0] + rect[2] * 0.45;
+                let width = (rect[0] + rect[2] - 7.0 - track_x).max(1.0);
+                setting
+                    .item
+                    .set_slider(s, ((x - track_x) / width).clamp(0.0, 1.0));
+                self.volt.dragging = Some(setting.item);
+                self.volt.drag_track = (track_x, width);
+                return vec![Event::ButtonClick, Event::Changed];
+            }
+            setting.item.cycle(s, right, self.framebuffer);
+            return vec![Event::ButtonClick, Event::Changed];
         }
         Vec::new()
     }
@@ -6650,13 +7628,10 @@ mod tests {
                 false,
             )
         };
-        for page in [Page::Horizon, Page::Extras] {
-            assert_eq!(
-                click(&mut ui, &mut s, Act::Push(page)),
-                vec![Event::ButtonClick]
-            );
-            assert_eq!(ui.page(), page);
-        }
+        // Volt+ Settings draws its own sidebar and lays out none of these buttons,
+        // so the Extras page is opened directly here.
+        ui.push(Page::Extras);
+        assert_eq!(ui.page(), Page::Extras);
         let (widgets, _, _, _) = ui.layout(&s, size.0, size.1);
         assert_eq!(
             widgets
@@ -6700,7 +7675,7 @@ mod tests {
             ui.key(&mut s, &atlas, winit::keyboard::KeyCode::Escape, None),
             vec![Event::Changed]
         );
-        assert_eq!(ui.page(), Page::Horizon);
+        assert_eq!(ui.page(), Page::Main);
     }
 
     #[test]
@@ -7511,20 +8486,15 @@ mod tests {
             &main[main.len() - 3..],
             [Page::Horizon, Page::Mods, Page::Credits]
         );
+        // Volt+ Settings draws the sidebar and its panel itself: it lays out no
+        // widget of the vanilla list, and every tab has rows of its own.
         ui.push(Page::Horizon);
-        assert_eq!(
-            pushes(&mut ui),
-            [
-                Page::Graphics,
-                Page::GraphicsAdvanced,
-                Page::ShaderPacks,
-                Page::Controller,
-                Page::Extras,
-                Page::Mods,
-                Page::Agent,
-            ]
-        );
+        assert!(pushes(&mut ui).is_empty());
+        for tab in VoltTab::ALL {
+            assert!(!tab.rows().is_empty(), "{tab:?}");
+        }
         // No AI hides the AI Agent page.
+        ui.stack = vec![Page::Main];
         let mut no_ai = Settings::default();
         no_ai.extras.no_ai = true;
         let (widgets, _, _, _) = ui.layout(&no_ai, 427.0, 240.0);

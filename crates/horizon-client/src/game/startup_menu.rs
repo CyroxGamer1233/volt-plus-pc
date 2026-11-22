@@ -1904,7 +1904,9 @@ impl Loading {
                         }
                     }
                     InGameMenuAction::ToggleRecorderOverlay => {
-                        horizon_client::recorder::update_settings(|s| s.hide_overlay = !s.hide_overlay);
+                        horizon_client::recorder::update_settings(|s| {
+                            s.record_controls = !s.record_controls
+                        });
                     }
                     InGameMenuAction::RecorderStart => crate::screen_record::start(),
                     InGameMenuAction::RecorderStop => crate::screen_record::stop(),

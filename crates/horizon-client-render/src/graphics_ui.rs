@@ -721,7 +721,7 @@ impl Item {
     /// folder, a display swapped for an SDR one: the renderer leaves HDR off there, and
     /// the saved values wait for an HDR display), and its sliders do something only
     /// while it is on.
-    fn blocked(self, s: &Settings) -> Option<&'static str> {
+    pub(crate) fn blocked(self, s: &Settings) -> Option<&'static str> {
         if !self.available() {
             return Some("This feature is not yet available in Horizon.");
         }

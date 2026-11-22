@@ -71,8 +71,10 @@ pub struct Settings {
     pub fps: usize,
     /// Index into [`AUDIO`].
     pub audio: usize,
-    /// Record without the touch controls and HUD on screen.
-    pub hide_overlay: bool,
+    /// Record the touch controls and the HUD into the video. Off records raw
+    /// gameplay: the overlay is hidden for as long as the capture runs, so the
+    /// video has no controls in it.
+    pub record_controls: bool,
 }
 
 impl Default for Settings {
@@ -81,7 +83,9 @@ impl Default for Settings {
             resolution: 3,
             fps: 1,
             audio: 0,
-            hide_overlay: true,
+            // The controls stay on screen and in the video until the player asks
+            // for a raw recording: nothing hides the HUD behind their back.
+            record_controls: true,
         }
     }
 }
@@ -223,10 +227,11 @@ pub fn publish(next: Status) {
     *status_lock().lock().unwrap_or_else(|e| e.into_inner()) = next;
 }
 
-/// Whether the touch controls and HUD should be kept off screen for the recording.
+/// Whether the touch controls and HUD should be kept off screen for the recording:
+/// a raw recording (`record_controls` off) leaves them out of the video.
 pub fn hiding_controls() -> bool {
-    let (hide, status) = (settings().hide_overlay, status());
-    hide && status.phase == Phase::Recording
+    let (raw, status) = (!settings().record_controls, status());
+    raw && status.phase == Phase::Recording
 }
 
 /// `1.2 MB`, `930 kB`: a recording's size as the list shows it.
@@ -280,7 +285,7 @@ mod tests {
             resolution: 99,
             fps: 99,
             audio: 99,
-            hide_overlay: false,
+            record_controls: true,
         };
         assert_eq!(out_of_range.height(), 1440);
         assert_eq!(out_of_range.frames(), 165);
