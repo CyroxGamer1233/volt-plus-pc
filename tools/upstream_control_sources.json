@@ -14,11 +14,40 @@
         "LayerController",
         "InputMap"
       ]
+    },
+    "pojav_exp4j": {
+      "repository": "https://github.com/PojavLauncherTeam/exp4j",
+      "commit": "60eaec6f78a530e655570adf61dc6ee41453176d",
+      "paths": [
+        "src/main/java",
+        "LICENSE"
+      ]
     }
   },
   "files": {
     "third_party/pojav-control-engine/LICENSE.GPL-3.0": "49b54c37619be63d0bf1f865daf12d3ecdf4ef4dedbaa0735c57b109f50db3df",
     "third_party/pojav-control-engine/LICENSE.LGPL-3.0": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118",
+    "third_party/pojav-control-engine/exp4j/LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "third_party/pojav-control-engine/exp4j/src/main/java/net/objecthunter/exp4j/ArrayStack.java": "5234324e761b50a37fedaaf6117f38a5fc4d54a10ec1cf3e0232b329679f3fa5",
+    "third_party/pojav-control-engine/exp4j/src/main/java/net/objecthunter/exp4j/Expression.java": "54997e4bfa103328f763b846bf9a491f1552d11a2e09140d51312f3577685731",
+    "third_party/pojav-control-engine/exp4j/src/main/java/net/objecthunter/exp4j/ExpressionBuilder.java": "f9d9de4116b5d1e0fd6753cb1a596568c75f2493349f92d6a537060a2ecb05e8",
+    "third_party/pojav-control-engine/exp4j/src/main/java/net/objecthunter/exp4j/ValidationResult.java": "0174bddb2ca69cd40805e0e89dcb32266d30d53029ca5ae5e4b4054fb7c05e7d",
+    "third_party/pojav-control-engine/exp4j/src/main/java/net/objecthunter/exp4j/function/Function.java": "a233621128403476b97972cb0a97cd5712e1934191d0f87a8d6cfe0809b2004e",
+    "third_party/pojav-control-engine/exp4j/src/main/java/net/objecthunter/exp4j/function/Functions.java": "02ae2d40f27d60bf4aaab30b0e6487a391500fd7f107d21cd234f47ed51e2095",
+    "third_party/pojav-control-engine/exp4j/src/main/java/net/objecthunter/exp4j/operator/Operator.java": "86fedda60fcb105d98d7622043a298d96b98f09f91ef6f283ce3b3bdb35ae53b",
+    "third_party/pojav-control-engine/exp4j/src/main/java/net/objecthunter/exp4j/operator/Operators.java": "6052180fe7714e9b6589887a80edfe13c615e4dff7f915f319cfc78962fffdc9",
+    "third_party/pojav-control-engine/exp4j/src/main/java/net/objecthunter/exp4j/shuntingyard/ShuntingYard.java": "998cf904c5c72c0eaecfb02dcfe1018da0f83e25823d767a2b6855c620a490e2",
+    "third_party/pojav-control-engine/exp4j/src/main/java/net/objecthunter/exp4j/tokenizer/ArgumentSeparatorToken.java": "8caec87feb20acb16afc0aedb8ea05b8d7a0ffd3444d82e3db17f6514236b65a",
+    "third_party/pojav-control-engine/exp4j/src/main/java/net/objecthunter/exp4j/tokenizer/CloseParenthesesToken.java": "1ccc936522760159ef49c8d065af01e1b4f73c9cdd887f2062f1d03e418f6cbb",
+    "third_party/pojav-control-engine/exp4j/src/main/java/net/objecthunter/exp4j/tokenizer/FunctionToken.java": "bbd32a1a1c85892f4a03535b8261e2fc653554dd58340a1554039e631b4a4701",
+    "third_party/pojav-control-engine/exp4j/src/main/java/net/objecthunter/exp4j/tokenizer/NumberToken.java": "c940bbb7c30b935fb09df39bd3892735f32d3d89eedbef2692e5bf52247df7b2",
+    "third_party/pojav-control-engine/exp4j/src/main/java/net/objecthunter/exp4j/tokenizer/OpenParenthesesToken.java": "8e9c2455a09613efbd3da69d6645355337cac2d73457ed593eba3d3b43ecaa16",
+    "third_party/pojav-control-engine/exp4j/src/main/java/net/objecthunter/exp4j/tokenizer/OperatorToken.java": "6205ffc7a15ad9625ecac97426de26b3893c41c79cf692834ba7803acd024d00",
+    "third_party/pojav-control-engine/exp4j/src/main/java/net/objecthunter/exp4j/tokenizer/Token.java": "d40537de2b6fff3235292ec41af8455652e7a52d5012c7530ad03032bac99a5e",
+    "third_party/pojav-control-engine/exp4j/src/main/java/net/objecthunter/exp4j/tokenizer/Tokenizer.java": "4495d54b537b0d16b12cd597080175fae8d770fdeaa9feccc8765739da9cfb7e",
+    "third_party/pojav-control-engine/exp4j/src/main/java/net/objecthunter/exp4j/tokenizer/UnknownFunctionOrVariableException.java": "a5b76a936a258bc144cfeb8359053f7a7a5e3b39f71f5c50572c5c5616e2af74",
+    "third_party/pojav-control-engine/exp4j/src/main/java/net/objecthunter/exp4j/tokenizer/VariableToken.java": "340cd0aeb9483658cf2e433dc7f3ec8dc61b3a7a6d3787e4e3bfe0331f6690a7",
+    "third_party/pojav-control-engine/exp4j/src/main/javadoc/overview.html": "eb6ab2451d95cabbaf4aaf3a022626326ced0e09b2a7f4ad8b6e22cd461d9fd8",
     "third_party/pojav-control-engine/src/customcontrols/ControlButtonMenuListener.java": "8b5f3dea2b27b6b26c2c3d68360742a5017c8b9005529b57e0afc7cc4f3e707d",
     "third_party/pojav-control-engine/src/customcontrols/ControlData.java": "43e21b8bf96cf6fecba43ee71cdc7e0aa6bf55f4a08fe4d77030bcfb4de8a244",
     "third_party/pojav-control-engine/src/customcontrols/ControlDrawerData.java": "57f23c46c1945bf57a01be65af99429b023c51da5388d94f384f272171270267",

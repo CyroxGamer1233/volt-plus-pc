@@ -14,6 +14,7 @@ android {
     compileSdk 35
     defaultConfig { minSdk 28 }
     sourceSets.main.java.srcDir layout.buildDirectory.dir('generated/pojav')
+    sourceSets.main.java.srcDir '../../../third_party/pojav-control-engine/exp4j/src/main/java'
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
     testOptions { unitTests.includeAndroidResources = true }
 }
@@ -26,7 +27,6 @@ kotlin { jvmToolchain(17) }
 dependencies {
     implementation 'androidx.annotation:annotation:1.9.1'
     implementation 'com.google.code.gson:gson:2.10.1'
-    implementation 'net.objecthunter:exp4j:0.4.8'
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.robolectric:robolectric:4.14.1'
 }

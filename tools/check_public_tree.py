@@ -24,6 +24,7 @@ UPSTREAM_CONTROL_JAVA = frozenset(
     path for path in json.loads(_UPSTREAM_MANIFEST.read_text())["files"]
     if path.endswith(".java") and path.startswith((
         "third_party/pojav-control-engine/src/customcontrols/",
+        "third_party/pojav-control-engine/exp4j/src/main/java/",
         "third_party/zalith-control-engine/InputMap/",
     ))
 )

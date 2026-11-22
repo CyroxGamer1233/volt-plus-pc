@@ -94,6 +94,15 @@ under LGPL-3.0; see `third_party/pojav-control-engine/LICENSE.LGPL-3.0` and
 `LICENSE.GPL-3.0`. These files are **not compiled into the APK yet** and depend
 on upstream Android resources and launcher input bridges not included here.
 
+## PojavLauncher exp4j fork (source staging only)
+
+`third_party/pojav-control-engine/exp4j` contains the PojavLauncherTeam fork of
+[exp4j](https://github.com/PojavLauncherTeam/exp4j) at commit
+`60eaec6f78a530e655570adf61dc6ee41453176d`, under Apache-2.0; its license is
+included there. The standalone Pojav converter probe builds it from source; it
+is **not compiled into the APK yet**. The original Pojav controls depend on
+this fork's expression API, which is absent from the standard 0.4.8 release.
+
 ## Zalith Launcher 2 LayerController (source staging only)
 
 `third_party/zalith-control-engine/LayerController` and `InputMap` contain source
