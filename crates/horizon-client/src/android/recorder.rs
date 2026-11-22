@@ -9,14 +9,41 @@
 use horizon_client::recorder::{self, Capability, Phase, Recording, Status};
 use jni::{
     JNIEnv,
-    objects::{JObject, JString, JValue},
+    objects::{JClass, JObject, JString, JValue},
 };
 use std::{
     sync::{Mutex, OnceLock},
     time::{Duration, Instant},
 };
 
-const CLASS: &str = "dev/horizon/android/ScreenRecorder";
+const CLASS_NAME: &str = "dev.horizon.android.ScreenRecorder";
+
+/// Looks `ScreenRecorder` up through the activity's class loader.
+///
+/// `FindClass` on a thread that merely attached to the VM resolves names with the
+/// boot class loader, which cannot see the app's own classes, so every call made
+/// that way throws. Going through the activity's loader works from any thread.
+fn recorder_class<'a>(
+    env: &mut JNIEnv<'a>,
+    activity: &JObject<'_>,
+) -> jni::errors::Result<JClass<'a>> {
+    let name = JObject::from(env.new_string(CLASS_NAME)?);
+    let loader = env
+        .call_method(activity, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])?
+        .l()?;
+    let class = env
+        .call_method(
+            &loader,
+            "loadClass",
+            "(Ljava/lang/String;)Ljava/lang/Class;",
+            &[JValue::Object(&name)],
+        )?
+        .l()?;
+    if class.is_null() {
+        return Err(jni::errors::Error::NullPtr(CLASS_NAME));
+    }
+    Ok(JClass::from(class))
+}
 
 fn polled() -> &'static Mutex<Option<Instant>> {
     static POLLED: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
@@ -78,9 +105,10 @@ fn publish_state(raw: &str) {
 /// Reads what this device can do: Android version, display, audio sources, capture service.
 pub fn capabilities() -> Capability {
     let Some(raw) = crate::platform::with_context(|env, activity| {
+        let class = recorder_class(env, activity)?;
         let value = env
             .call_static_method(
-                CLASS,
+                class,
                 "capabilities",
                 "(Landroid/content/Context;)Ljava/lang/String;",
                 &[JValue::Object(activity)],
@@ -169,9 +197,10 @@ pub fn refresh(watching: bool) {
         }
         *last = Some(now);
     }
-    let Some(raw) = crate::platform::with_context(|env, _| {
+    let Some(raw) = crate::platform::with_context(|env, activity| {
+        let class = recorder_class(env, activity)?;
         let value = env
-            .call_static_method(CLASS, "status", "()Ljava/lang/String;", &[])?
+            .call_static_method(class, "status", "()Ljava/lang/String;", &[])?
             .l()?;
         text(env, value)
     }) else {
@@ -223,9 +252,10 @@ pub fn start() {
     let frames = settings.frames() as i32;
     let audio = settings.audio as i32;
     let result = crate::platform::with_context(|env, activity| {
+        let class = recorder_class(env, activity)?;
         let value = env
             .call_static_method(
-                CLASS,
+                class,
                 "start",
                 "(Landroid/app/Activity;IIII)Ljava/lang/String;",
                 &[
@@ -239,16 +269,24 @@ pub fn start() {
             .l()?;
         text(env, value)
     });
-    if let Some(raw) = result {
-        publish_state(&raw);
+    match result {
+        Some(raw) => publish_state(&raw),
+        None => {
+            // Say so instead of leaving the overlay silent.
+            let mut status = recorder::status();
+            status.phase = Phase::Error;
+            status.message = "the recorder service could not be reached".to_owned();
+            recorder::publish(status);
+        }
     }
 }
 
 /// Ends the recording; the service finalises the file before the phase turns to `Saved`.
 pub fn stop() {
-    let result = crate::platform::with_context(|env, _| {
+    let result = crate::platform::with_context(|env, activity| {
+        let class = recorder_class(env, activity)?;
         let value = env
-            .call_static_method(CLASS, "stop", "()Ljava/lang/String;", &[])?
+            .call_static_method(class, "stop", "()Ljava/lang/String;", &[])?
             .l()?;
         text(env, value)
     });
@@ -261,9 +299,10 @@ pub fn stop() {
 /// The finished recordings, newest first.
 pub fn list_recordings() -> Vec<Recording> {
     let Some(raw) = crate::platform::with_context(|env, activity| {
+        let class = recorder_class(env, activity)?;
         let value = env
             .call_static_method(
-                CLASS,
+                class,
                 "recordings",
                 "(Landroid/content/Context;)Ljava/lang/String;",
                 &[JValue::Object(activity)],
@@ -282,10 +321,11 @@ pub fn play(uri: &str) -> String {
         return "nothing to play".to_owned();
     };
     let result = crate::platform::with_context(|env, activity| {
+        let class = recorder_class(env, activity)?;
         let item = JObject::from(env.new_string(&uri)?);
         let value = env
             .call_static_method(
-                CLASS,
+                class,
                 "play",
                 "(Landroid/app/Activity;Ljava/lang/String;)Ljava/lang/String;",
                 &[JValue::Object(activity), JValue::Object(&item)],
