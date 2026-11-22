@@ -19,8 +19,10 @@
             <meta-data android:name="android.app.lib_name" android:value="horizon_android" />
             <meta-data android:name="android.app.func_name" android:value="horizon_on_create" />
         </activity>
+        <!-- The video needs its own regular window: NativeActivity takes over its window surface. -->
+        <activity android:name="dev.horizon.android.IntroActivity" android:exported="false" android:screenOrientation="sensorLandscape" android:configChanges="orientation|screenSize|keyboardHidden|keyboard|density|screenLayout" android:theme="@style/HorizonGameTheme" />
         <!-- Keep installed launcher shortcuts targeting the previous component. -->
-        <activity-alias android:name="com.google.androidgamesdk.GameActivity" android:targetActivity="dev.horizon.android.HorizonActivity" android:exported="true">
+        <activity-alias android:name="com.google.androidgamesdk.GameActivity" android:targetActivity="dev.horizon.android.IntroActivity" android:exported="true">
             <meta-data android:name="android.app.lib_name" android:value="horizon_android" />
             <meta-data android:name="android.app.func_name" android:value="horizon_on_create" />
             <intent-filter>

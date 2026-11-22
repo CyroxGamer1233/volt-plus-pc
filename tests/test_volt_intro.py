@@ -19,19 +19,31 @@ class VoltIntroTests(unittest.TestCase):
         self.assertIn('HERE / "media" / "intro.mp4"', standalone)
         self.assertIn('"-0", "mp4"', standalone)
 
-    def test_overlay_waits_for_native_frame_and_handles_failures(self):
-        java = source('packaging/android/java/dev/horizon/android/HorizonActivity.java')
+    def test_video_uses_separate_window_before_native_launcher(self):
+        java = source('packaging/android/java/dev/horizon/android/IntroActivity.java')
+        native = source('packaging/android/java/dev/horizon/android/HorizonActivity.java')
+        manifest = source('packaging/android/AndroidManifest.xml')
         pages = source('crates/horizon-client/src/android/launcher_pages.rs')
-        self.assertIn('prepareAsync()', java)
+        self.assertIn('extends android.app.Activity', java)
+        self.assertIn('new android.view.SurfaceView(this)', java)
         self.assertIn('getAssets().openFd("intro.mp4")', java)
-        self.assertIn('!nativeReady || !videoFinished', java)
+        self.assertIn('prepareAsync()', java)
+        self.assertIn('setOnCompletionListener(mp -> openLauncher())', java)
         self.assertIn('setOnErrorListener', java)
-        self.assertIn('15000', java)
-        self.assertIn('onPause()', java)
-        self.assertIn('if !crate::android::intro_finished()', pages)
-        self.assertIn('crate::android::first_frame_shown();', pages)
+        self.assertIn('postDelayed(watchdog, 12000)', java)
+        self.assertIn('surfaceDestroyed', java)
+        self.assertIn('if (prepared && player != null) player.start()', java)
+        self.assertIn('new android.content.Intent(this, HorizonActivity.class)', java)
+        self.assertIn('android:targetActivity="dev.horizon.android.IntroActivity"', manifest)
+        self.assertNotIn('TextureView', native)
+        self.assertNotIn('intro_finished()', pages)
         self.assertNotIn('ui.draw_horizon_intro(', pages)
         self.assertIn('windowSplashScreenAnimatedIcon', source('packaging/android/res/values-v31/styles.xml'))
+
+    def test_exit_prompt_uses_product_name(self):
+        pages = source('crates/horizon-client/src/android/launcher_pages.rs')
+        self.assertIn('"Exit volt plus?"', pages)
+        self.assertNotIn('"Exit Horizon Android?"', pages)
 
     def test_reveal_blocks_hits_and_respects_reduced_motion(self):
         pages = source('crates/horizon-client/src/android/launcher_pages.rs')

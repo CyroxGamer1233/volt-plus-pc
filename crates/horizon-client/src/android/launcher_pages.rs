@@ -1335,21 +1335,8 @@ impl Launcher {
         if r.suspended {
             return Ok(());
         }
-        // Render a black native frame behind Android's video overlay. The platform
-        // removes the overlay only after both playback and this first frame finish.
+        // The video plays in a separate activity before the native window exists.
         if !self.anim.intro_done {
-            if !crate::android::intro_finished() {
-                self.targets.clear();
-                self.list_targets.clear();
-                let mut b = HudBatch::new([r.config.width, r.config.height]);
-                let mut ui = Ui::mobile(&gui.atlas, &mut b, (0.0, 0.0));
-                ui.fill(0.0, 0.0, ui.w, ui.h, color::hex(0x000000, 255));
-                ui.finish();
-                if r.render(&game::loading_frame(&b))? {
-                    crate::android::first_frame_shown();
-                }
-                return Ok(());
-            }
             self.anim.intro_done = true;
             self.anim.reveal_start = Some(std::time::Instant::now());
             self.anim.trigger_page_transition();
@@ -2340,7 +2327,7 @@ impl Launcher {
                 x + 22.0,
                 y + 24.0,
                 my3_text(),
-                "Exit Horizon Android?",
+                "Exit volt plus?",
             );
             let bw = (width - 52.0) * 0.5;
             button(
