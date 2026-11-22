@@ -7,6 +7,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.lwjgl.glfw.CallbackBridge
 import java.nio.file.Files
 
 /** The actual upstream converter and data classes run against test host stubs. */
@@ -26,6 +27,30 @@ class PojavConverterTest {
             assertArrayEquals(original, file.readBytes())
             assertTrue(converted.mControlDataList.any { it.keycodes.contains(87) })
         } finally { file.delete() }
+    }
+
+    @Test fun suppliedDynamicPositionsUseActualPojavExpressionEngine() {
+        val original = javaClass.classLoader!!.getResourceAsStream("pojav-v4.json")!!.readBytes()
+        val cache = Files.createTempDirectory("pojav-positions-").toFile()
+        val oldWidth = CallbackBridge.physicalWidth
+        val oldHeight = CallbackBridge.physicalHeight
+        try {
+            val converted = SafePojavLoader.load(original, cache)
+            val mouse = converted.mControlDataList.first { it.name == "Mouse" }
+            for ((width, height) in listOf(1920 to 1080, 1280 to 720)) {
+                CallbackBridge.physicalWidth = width
+                CallbackBridge.physicalHeight = height
+                for (button in converted.mControlDataList) {
+                    assertTrue("x for ${button.name}", button.insertDynamicPos(button.dynamicX).isFinite())
+                    assertTrue("y for ${button.name}", button.insertDynamicPos(button.dynamicY).isFinite())
+                }
+                assertEquals(width.toFloat() - mouse.width, mouse.insertDynamicPos(mouse.dynamicX), 0.01f)
+            }
+        } finally {
+            CallbackBridge.physicalWidth = oldWidth
+            CallbackBridge.physicalHeight = oldHeight
+            cache.deleteRecursively()
+        }
     }
 
     @Test fun adapterMigratesScratchCopyAndLeavesOriginalUntouched() {
