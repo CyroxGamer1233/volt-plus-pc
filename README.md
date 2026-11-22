@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="packaging/android/res/drawable-nodpi/launcher_icon.png" width="112" alt="Volt Plus logo" />
+  <img src="docs/media/volt-plus-logo.svg" width="112" alt="Volt Plus logo" />
 </p>
 
 <h1 align="center">Volt Plus</h1>
@@ -144,12 +144,6 @@ Volt Plus builds on the work of the **[Horizon project](https://github.com/GoyDe
 Minecraft is a trademark of Mojang AB. Volt Plus is an independent, unofficial project and is not approved by, sponsored by or affiliated with Mojang or Microsoft.
 
 ## Owner
-
-<p align="center">
-  <a href="https://github.com/entitybrian69-bit">
-    <img src="https://github.com/entitybrian69-bit.png" width="144" alt="Volt Plus owner GitHub profile" />
-  </a>
-</p>
 
 <p align="center"><strong>Entitybrian</strong><br />Founder and maintainer of Volt Plus</p>
 
