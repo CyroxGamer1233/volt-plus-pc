@@ -1,6 +1,8 @@
 package dev.voltplus.test
 
 import com.movtery.layer_controller.event.ClickEvent
+import com.movtery.layer_controller.layout.loadLayoutFromString
+import com.movtery.layer_controller.observable.ObservableControlLayout
 import dev.horizon.android.control.ControlInputSink
 import dev.horizon.android.control.Repeater
 import dev.horizon.android.control.ZalithEvents
@@ -48,6 +50,27 @@ class ZalithEventsTest {
         a.accept(ClickEvent(ClickEvent.Type.SendText, "hello"), true)
         assertEquals("hello", sink.text)
         a.dispose(); assertEquals(1, sink.resets)
+    }
+
+    @Test fun suppliedLayoutDispatchesDiagonalAndLayerSwitchThroughOriginalEngine() {
+        val input = javaClass.classLoader!!.getResourceAsStream("zalith-v11-fixture.json")!!
+            .bufferedReader().use { it.readText() }
+        val layout = ObservableControlLayout(loadLayoutFromString(input))
+        val layers = layout.layers.value
+        val sink = Sink(); val events = ZalithEvents(sink, FakeRepeater())
+        val diagonal = layers.last().normalButtons.value.first()
+        diagonal.onTouchEvent(events.handler, layers, emptyList(), {}, {})
+        diagonal.onReleaseEvent(events.handler, layers)
+        assertEquals(listOf(
+            Triple("key", "GLFW_KEY_W", true), Triple("key", "GLFW_KEY_A", true),
+            Triple("key", "GLFW_KEY_W", false), Triple("key", "GLFW_KEY_A", false)
+        ), sink.edges)
+        assertTrue(layers.drop(1).none { it.hide })
+        val toggle = layers.first().normalButtons.value.first()
+        toggle.onTouchEvent(events.handler, layers, emptyList(), {}, {})
+        toggle.onReleaseEvent(events.handler, layers)
+        assertTrue(layers.drop(1).all { it.hide })
+        events.dispose()
     }
 
     @Test fun heldScrollRepeatsAndStopsOnLastReleaseOrDispose() {
