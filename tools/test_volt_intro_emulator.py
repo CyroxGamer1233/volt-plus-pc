@@ -11,12 +11,7 @@ import tempfile
 import time
 import zipfile
 
-from PIL import Image, ImageChops
-
 ROOT = Path(__file__).resolve().parents[1]
-SDK = Path(os.environ['ANDROID_HOME'])
-TOOLS = SDK / 'build-tools/35.0.0'
-ANDROID_JAR = SDK / 'platforms/android-35/android.jar'
 
 
 def run(*command, **kwargs):
@@ -25,6 +20,10 @@ def run(*command, **kwargs):
 
 
 def main():
+    from PIL import Image, ImageChops
+    sdk = Path(os.environ['ANDROID_HOME'])
+    tools = sdk / 'build-tools/35.0.0'
+    android_jar = sdk / 'platforms/android-35/android.jar'
     with tempfile.TemporaryDirectory() as temporary:
         t = Path(temporary)
         (t / 'assets').mkdir()
@@ -51,19 +50,19 @@ def main():
             }
           }''')
         apk, aligned = t / 'base.apk', t / 'aligned.apk'
-        run(TOOLS / 'aapt2', 'link', '-o', apk, '--manifest', manifest, '-I', ANDROID_JAR,
+        run(tools / 'aapt2', 'link', '-o', apk, '--manifest', manifest, '-I', android_jar,
             '--min-sdk-version', '28', '--target-sdk-version', '35', '-0', 'mp4', '-A', t / 'assets')
-        run('javac', '--release', '8', '-classpath', ANDROID_JAR, '-d', t / 'classes',
+        run('javac', '--release', '8', '-classpath', android_jar, '-d', t / 'classes',
             ROOT / 'packaging/android/java/dev/horizon/android/IntroActivity.java', stub)
         classes = list((t / 'classes').rglob('*.class'))
-        run(TOOLS / 'd8', '--min-api', '28', '--lib', ANDROID_JAR, '--output', t / 'dex', *classes)
+        run(tools / 'd8', '--min-api', '28', '--lib', android_jar, '--output', t / 'dex', *classes)
         with zipfile.ZipFile(apk, 'a') as z:
             z.write(t / 'dex/classes.dex', 'classes.dex')
-        run(TOOLS / 'zipalign', '-f', '4', apk, aligned)
+        run(tools / 'zipalign', '-f', '4', apk, aligned)
         keystore = t / 'test.jks'
         run('keytool', '-genkeypair', '-keystore', keystore, '-storepass', 'android', '-keypass', 'android',
             '-alias', 'test', '-keyalg', 'RSA', '-validity', '1', '-dname', 'CN=Emulator Test')
-        run(TOOLS / 'apksigner', 'sign', '--ks', keystore, '--ks-pass', 'pass:android', aligned)
+        run(tools / 'apksigner', 'sign', '--ks', keystore, '--ks-pass', 'pass:android', aligned)
         run('adb', 'install', '-r', aligned)
         run('adb', 'logcat', '-c')
         run('adb', 'shell', 'am', 'start', '-W', '-n', 'vp.net.voltplus.introtest/dev.horizon.android.IntroActivity')
