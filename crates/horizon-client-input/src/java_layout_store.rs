@@ -87,6 +87,21 @@ fn safe_directory(home: &Path, format: Format) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+fn verify_existing(target: &Path, bytes: &[u8]) -> Result<(), String> {
+    let m = fs::symlink_metadata(target).map_err(|e| e.to_string())?;
+    if !m.is_file() || m.file_type().is_symlink() {
+        return Err("Refusing redirected control layout file".into());
+    }
+    if m.len() != bytes.len() as u64 {
+        return Err("Existing control layout has an unexpected size".into());
+    }
+    let existing = fs::read(target).map_err(|e| e.to_string())?;
+    if existing != bytes {
+        return Err("Existing control layout has an unexpected checksum".into());
+    }
+    Ok(())
+}
+
 /// Store the exact supplied bytes under a content-derived name, without using
 /// a provider-controlled filename or replacing an unrelated user's layout.
 pub fn store(home: &Path, bytes: &[u8]) -> Result<(Format, PathBuf), String> {
@@ -94,12 +109,10 @@ pub fn store(home: &Path, bytes: &[u8]) -> Result<(Format, PathBuf), String> {
     let dir = safe_directory(home, format)?;
     let digest = format!("{:x}", Sha256::digest(bytes));
     let target = dir.join(format!("{digest}.json"));
-    if let Ok(m) = fs::symlink_metadata(&target) {
-        if !m.is_file() || m.file_type().is_symlink() { return Err("Refusing redirected control layout file".into()); }
-        if m.len() != bytes.len() as u64 { return Err("Existing control layout has an unexpected size".into()); }
-        let existing = fs::read(&target).map_err(|e| e.to_string())?;
-        if existing == bytes { return Ok((format, target)); }
-        return Err("Existing control layout has an unexpected checksum".into());
+    match fs::symlink_metadata(&target) {
+        Ok(_) => { verify_existing(&target, bytes)?; return Ok((format, target)); }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {},
+        Err(e) => return Err(format!("Could not inspect control layout: {e}")),
     }
     static SERIAL: AtomicU64 = AtomicU64::new(0);
     let temp = dir.join(format!(".import-{}-{}.tmp", std::process::id(), SERIAL.fetch_add(1, Ordering::Relaxed)));
@@ -108,10 +121,15 @@ pub fn store(home: &Path, bytes: &[u8]) -> Result<(Format, PathBuf), String> {
         file.write_all(bytes).map_err(|e| e.to_string())?;
         file.sync_all().map_err(|e| e.to_string())?;
         drop(file);
-        fs::rename(&temp, &target).map_err(|e| e.to_string())?;
-        Ok(())
+        // Atomically install without replacing a file created by a concurrent
+        // import. The temporary file and target reside in the same directory.
+        match fs::hard_link(&temp, &target) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => verify_existing(&target, bytes),
+            Err(e) => Err(format!("Could not install control layout: {e}")),
+        }
     })();
-    if result.is_err() { let _ = fs::remove_file(&temp); }
+    let _ = fs::remove_file(&temp);
     result?;
     Ok((format, target))
 }
@@ -135,6 +153,21 @@ mod tests {
             assert_eq!(store(&home, bytes).unwrap().1, file);
         }
         assert!(!home.join("horizon-touch.json").exists());
+        fs::remove_dir_all(home).unwrap();
+    }
+    #[test]
+    fn concurrent_imports_do_not_replace_or_leave_temporary_files() {
+        let home = std::env::temp_dir().join(format!("volt-layout-concurrent-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(&home).unwrap();
+        let workers: Vec<_> = (0..8).map(|_| {
+            let home = home.clone();
+            std::thread::spawn(move || store(&home, POJAV).unwrap().1)
+        }).collect();
+        let paths: Vec<_> = workers.into_iter().map(|w| w.join().unwrap()).collect();
+        assert!(paths.iter().all(|p| p == &paths[0]));
+        assert_eq!(fs::read(&paths[0]).unwrap(), POJAV);
+        assert_eq!(fs::read_dir(paths[0].parent().unwrap()).unwrap().count(), 1);
         fs::remove_dir_all(home).unwrap();
     }
     #[test]
