@@ -4084,7 +4084,7 @@ impl OptionsUi {
             left - 5.0,
             top - 5.0,
             width + 10.0,
-            grid_h + 6.0 + 26.0,
+            grid_h + 6.0 + 32.0,
             rgb(warm::SURFACE_DIM, 236),
         );
         for (x, y, w, h) in [
@@ -4095,17 +4095,6 @@ impl OptionsUi {
         }
         let heading = Text::literal("Tap a key to bind it").with_color(text::YELLOW);
         batch.text_styled(atlas, &heading, (size.0 - atlas.font.width_text(&heading)) * 0.5, 12.0, u32::MAX, true);
-        let hint = Text::literal("Tap or click a key  •  a mouse button outside the grid binds it");
-        if size.1 >= 130.0 {
-            batch.text_styled(
-                atlas,
-                &hint,
-                (size.0 - atlas.font.width_text(&hint)) * 0.5,
-                top - 15.0,
-                rgb(warm::TEXT_MUTED, 255),
-                false,
-            );
-        }
         let keys = keybinds::available_keys();
         let pages = keys.len().div_ceil(32);
         let page = self.touch_key_page.min(pages.saturating_sub(1));
@@ -4128,15 +4117,27 @@ impl OptionsUi {
         ui::button(batch, atlas, left, nav_y, width * 0.28, 20.0, &Text::literal("< Previous"), page > 0, false);
         ui::button(batch, atlas, left + width * 0.36, nav_y, width * 0.28, 20.0, &Text::literal("Cancel"), true, false);
         ui::button(batch, atlas, left + width * 0.72, nav_y, width * 0.28, 20.0, &Text::literal("Next >"), page + 1 < pages, false);
-        let count = Text::literal(format!("{} / {}  •  {} keys", page + 1, pages.max(1), keys.len()));
-        batch.text_styled(
-            atlas,
-            &count,
-            left + width - atlas.font.width_text(&count),
-            nav_y + 26.0,
-            rgb(warm::ACCENT_HI, 220),
-            false,
-        );
+        if nav_y + 34.0 < size.1 {
+            let count =
+                Text::literal(format!("{} / {}  •  {} keys", page + 1, pages.max(1), keys.len()));
+            batch.text_styled(
+                atlas,
+                &count,
+                left + width - atlas.font.width_text(&count),
+                nav_y + 25.0,
+                rgb(warm::ACCENT_HI, 220),
+                false,
+            );
+            let hint = Text::literal("A mouse button outside the grid binds it");
+            batch.text_styled(
+                atlas,
+                &hint,
+                left,
+                nav_y + 25.0,
+                rgb(warm::TEXT_MUTED, 255),
+                false,
+            );
+        }
     }
     /// A finger or the virtual mouse went down on the picker: remembers which
     /// cell is held so the next frame draws it pressed. Returns whether the

@@ -4142,6 +4142,14 @@ impl TouchUi {
                     muted_c,
                     "RECORDINGS",
                 );
+                ui.text(
+                    Face::Regular,
+                    8.4,
+                    cx + cw - 120.0,
+                    body_y + 339.0,
+                    muted_c,
+                    "Movies/VoltPlus",
+                );
                 let listed = &status.recordings;
                 if listed.is_empty() {
                     ui.text(
