@@ -90,6 +90,23 @@ class ZalithEventsTest {
         events.dispose(); assertEquals(1, sink.resets)
     }
 
+    @Test fun studioAddsAndDeletesWidgetsUsingOriginalLayoutModel() {
+        val input = javaClass.classLoader!!.getResourceAsStream("zalith-v11-fixture.json")!!
+            .bufferedReader().use { it.readText() }
+        val layout = ObservableControlLayout(loadLayoutFromString(input))
+        val layer = layout.layers.value.first()
+        val before = layer.normalButtons.value.size
+        val button = dev.horizon.android.control.ZalithStudioActions.addButton(layer)
+        button.text.default = "Custom"
+        button.addEvent(key("GLFW_KEY_W"))
+        val saved = layout.pack()
+        assertEquals(before + 1, saved.layers.first().normalButtons.size)
+        assertEquals("Custom", saved.layers.first().normalButtons.last().text.default)
+        assertEquals("GLFW_KEY_W", saved.layers.first().normalButtons.last().clickEvents.single().key)
+        dev.horizon.android.control.ZalithStudioActions.delete(layer, button)
+        assertEquals(before, layout.pack().layers.first().normalButtons.size)
+    }
+
     @Test fun heldScrollRepeatsAndStopsOnLastReleaseOrDispose() {
         val sink = Sink(); val r = FakeRepeater(); val a = ZalithEvents(sink, r)
         val scroll = launch("launcher.event.scroll_up")
