@@ -24,7 +24,7 @@ jobs:
         working-directory: tests/control_engine_build
         run: |
           set -o pipefail
-          gradle :layer:assembleDebug :layer:testDebugUnitTest --stacktrace 2>&1 | tee "$RUNNER_TEMP/controls-build.log"
+          gradle :layer:assembleDebug :layer:testDebugUnitTest :pojav:testDebugUnitTest --stacktrace 2>&1 | tee "$RUNNER_TEMP/controls-build.log"
           python3 - <<'PY'
           from pathlib import Path
           import xml.etree.ElementTree as ET
@@ -34,6 +34,11 @@ jobs:
           if tests < 5:
               raise SystemExit(f'Original layout fixture tests did not run: {tests}')
           print(f'::notice::Original Zalith fixture tests executed: {tests}')
+          results = list(Path('pojav/build/test-results/testDebugUnitTest').glob('TEST-*.xml'))
+          tests = sum(int(ET.parse(p).getroot().get('tests', '0')) for p in results)
+          if tests < 2:
+              raise SystemExit(f'Pojav converter fixture tests did not run: {tests}')
+          print(f'::notice::Original Pojav converter fixture tests executed: {tests}')
           PY
       - name: Summarize failures
         if: failure()

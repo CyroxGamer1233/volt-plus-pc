@@ -1,0 +1,32 @@
+plugins {
+    id 'com.android.library'
+    id 'org.jetbrains.kotlin.android'
+}
+
+def stageOriginal = tasks.register('stageOriginalPojavModels', Sync) {
+    from('../../../third_party/pojav-control-engine/src/customcontrols') {
+        include 'ControlData.java', 'ControlDrawerData.java', 'ControlJoystickData.java', 'CustomControls.java', 'LayoutConverter.java'
+    }
+    into(layout.buildDirectory.dir('generated/pojav'))
+}
+android {
+    namespace 'dev.voltplus.pojavprobe'
+    compileSdk 35
+    defaultConfig { minSdk 28 }
+    sourceSets.main.java.srcDir layout.buildDirectory.dir('generated/pojav')
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    testOptions { unitTests.includeAndroidResources = true }
+}
+tasks.configureEach { task ->
+    if (task.name.startsWith('compile') && (task.name.endsWith('Kotlin') || task.name.endsWith('JavaWithJavac'))) {
+        task.dependsOn(stageOriginal)
+    }
+}
+kotlin { jvmToolchain(17) }
+dependencies {
+    implementation 'androidx.annotation:annotation:1.9.1'
+    implementation 'com.google.code.gson:gson:2.10.1'
+    implementation 'net.objecthunter:exp4j:0.4.8'
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.robolectric:robolectric:4.14.1'
+}
