@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/media/volt-plus-logo.svg" width="150" height="150" alt="Volt Plus logo" />
+  <img src="docs/media/volt-plus/logo.png" width="230" alt="Volt Plus logo" />
 </p>
 
 <h1 align="center">Volt Plus</h1>
