@@ -868,11 +868,14 @@ pub fn refresh_bounds() {
 /// Whether the optional experimental control editor was included in this APK.
 pub fn zalith_studio_available() -> bool {
     let Some(ui) = UI.get() else { return false; };
-    let Ok(mut env) = ui.vm.attach_current_thread() else { return false; };
-    match env.call_method(&ui.activity, "hasZalithStudio", "()Z", &[]).and_then(|v| v.z()) {
-        Ok(value) => value,
-        Err(_) => { let _ = env.exception_clear(); false }
-    }
+    static AVAILABLE: OnceLock<bool> = OnceLock::new();
+    *AVAILABLE.get_or_init(|| {
+        let Ok(mut env) = ui.vm.attach_current_thread() else { return false; };
+        match env.call_method(&ui.activity, "hasZalithStudio", "()Z", &[]).and_then(|v| v.z()) {
+            Ok(value) => value,
+            Err(_) => { let _ = env.exception_clear(); false }
+        }
+    })
 }
 
 /// The Android activity checks the layout path is private and of the right type.
