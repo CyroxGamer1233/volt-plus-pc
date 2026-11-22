@@ -16,4 +16,17 @@ jobs:
       - name: Check pinned upstream sources
         run: python3 -m unittest discover -s tests -p 'test_upstream_control_sources.py'
       - name: Run input adapter tests
-        run: cargo test --locked -p horizon-client-input --lib java_controls::tests
+        run: |
+          set -o pipefail
+          cargo test --locked -p horizon-client-input --lib java_controls::tests 2>&1 | tee "$RUNNER_TEMP/control-tests.log"
+      - name: Summarize test errors
+        if: failure()
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          path = Path(os.environ['RUNNER_TEMP']) / 'control-tests.log'
+          if path.exists():
+              for line in path.read_text(errors='replace').splitlines()[-55:]:
+                  print('::notice::' + line[:400].replace('%', '%25'))
+          PY
