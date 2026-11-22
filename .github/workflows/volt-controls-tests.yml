@@ -18,7 +18,7 @@ jobs:
       - name: Run input adapter tests
         run: |
           set -o pipefail
-          cargo test --locked -p horizon-client-input --lib java_controls::tests 2>&1 | tee "$RUNNER_TEMP/control-tests.log"
+          cargo test -p horizon-client-input --lib java_controls::tests 2>&1 | tee "$RUNNER_TEMP/control-tests.log"
       - name: Summarize test errors
         if: failure()
         run: |
