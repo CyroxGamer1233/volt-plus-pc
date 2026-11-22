@@ -530,7 +530,7 @@ public final class RecorderService extends Service {
     }
 
     /** Merges the staged video with the captured game audio; falls back to video only. */
-    private String finishGameAudio() {
+    private String finishGameAudio() throws Exception {
         File audioFile = audio == null ? null : audio.file();
         if (tempVideo == null || audioFile == null || !audioFile.exists() || audioFile.length() == 0) {
             openTarget();
