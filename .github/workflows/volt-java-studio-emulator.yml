@@ -46,7 +46,6 @@ jobs:
                   for fail in case.findall('failure'):
                       text = (fail.get('message', '') + ' ' + (fail.text or ''))[:1800]
                       print('::notice::' + (case.get('name', '') + ': ' + text).replace('%','%25').replace('\n','%0A'))
-          PY
           import os
           p = Path(os.environ['RUNNER_TEMP']) / 'studio-emulator.log'
           if p.exists():
@@ -54,3 +53,4 @@ jobs:
               for i, line in enumerate(lines):
                   if ' error:' in line or line.startswith('e: ') or line.startswith('* What went wrong:') or 'FAILURES!!!' in line or 'Exception' in line and ('Caused by' in line or 'Error' in line):
                       for row in lines[i:i+5]: print('::notice::' + row[:350].replace('%','%25'))
+          PY
