@@ -1,104 +1,99 @@
 <p align="center">
-  <img src="packaging/android/res/drawable-nodpi/launcher_icon.png" width="128" height="128" alt="Horizon Android Icon" />
+  <img src="packaging/android/res/drawable-nodpi/launcher_icon.png" width="160" height="160" alt="Volt Plus logo" />
 </p>
 
-# <p align="center">Horizon Android</p>
+<h1 align="center">Volt Plus</h1>
 
 <p align="center">
-  <a href="https://github.com/GoyDevv/Horizon-Android/releases"><img src="https://img.shields.io/badge/Release-v1.0.0-7C4DFF?style=for-the-badge&logo=android&logoColor=white" alt="Release v1.0.0" /></a>
-  <a href="https://discord.gg/CjyWBu2mC7"><img src="https://img.shields.io/badge/Discord-Community-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord" /></a>
-  <a href="https://github.com/GoyDevv/Horizon-Android"><img src="https://img.shields.io/badge/Minecraft%20Java-26.3-5D9C3F?style=for-the-badge&logo=curseforge&logoColor=white" alt="Minecraft Java 26.3" /></a>
-  <a href="https://github.com/GoyDevv/Horizon-Android"><img src="https://img.shields.io/badge/Rust-2024%20(wgpu)-B7410E?style=for-the-badge&logo=rust&logoColor=white" alt="Rust 2024" /></a>
-  <a href="https://github.com/GoyDevv/Horizon-Android"><img src="https://img.shields.io/badge/Android-API%2028--35-3DDC84?style=for-the-badge&logo=android&logoColor=white" alt="Android 9.0+" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-4527A0?style=for-the-badge" alt="License: MIT" /></a>
+  <b>A high-performance native Android port of Minecraft: Java Edition 26.3, rewritten in Rust with <code>wgpu</code> (Vulkan &amp; OpenGL ES).</b>
 </p>
 
-A high-performance native Android port of **Horizon**, rewriting Minecraft: Java Edition 26.3 in pure Rust with `wgpu` (Vulkan & OpenGL ES).
+<p align="center">
+  <a href="https://github.com/entitybrian69-bit/volt-plus/releases"><img src="https://img.shields.io/github/downloads/entitybrian69-bit/volt-plus/total?style=for-the-badge&label=Downloads&logo=github&logoColor=white" alt="Total downloads" /></a>
+  <a href="https://github.com/entitybrian69-bit/volt-plus/releases/latest"><img src="https://img.shields.io/github/v/release/entitybrian69-bit/volt-plus?style=for-the-badge&label=Release&logo=github&logoColor=white" alt="Latest release" /></a>
+  <a href="https://github.com/entitybrian69-bit/volt-plus/releases"><img src="https://img.shields.io/github/downloads/entitybrian69-bit/volt-plus/latest/total?style=for-the-badge&label=Latest%20APK%20downloads&logo=android&logoColor=white" alt="Downloads of the latest release" /></a>
+</p>
 
-**Android 9+ (API 28–35) · Vulkan 1.0+ / GLES 3.0 · Full SAF Read & Write · In-App GitHub Updater · Material 3 Launcher · 260 FPS Uncapped · Java Multiplayer**
+<p align="center">
+  <a href="https://discord.gg/WsBxGsKyhU"><img src="https://img.shields.io/badge/Join%20the%20Discord-WsBxGsKyhU-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join the Volt Plus Discord" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-4527A0?style=for-the-badge&logo=opensourceinitiative&logoColor=white" alt="License: MIT" /></a>
+  <a href="https://github.com/entitybrian69-bit/volt-plus"><img src="https://img.shields.io/badge/Minecraft%20Java-26.3-5D9C3F?style=for-the-badge&logo=curseforge&logoColor=white" alt="Minecraft Java 26.3" /></a>
+  <a href="https://github.com/entitybrian69-bit/volt-plus"><img src="https://img.shields.io/badge/Android-API%2028--35-3DDC84?style=for-the-badge&logo=android&logoColor=white" alt="Android 9.0+" /></a>
+</p>
 
-[Download Latest Release (v1.0.0)](https://github.com/GoyDevv/Horizon-Android/releases) · [Discord](https://discord.gg/CjyWBu2mC7) · [Build Guide](docs/android.md) · [Contributing](CONTRIBUTING_ANDROID.md) · [Report Bug](https://github.com/GoyDevv/Horizon-Android/issues)
+<p align="center">
+  <a href="https://github.com/entitybrian69-bit/volt-plus/releases/latest"><b>⬇ Download the latest APK</b></a>
+  &nbsp;·&nbsp;
+  <a href="https://discord.gg/WsBxGsKyhU"><b>💬 Discord</b></a>
+  &nbsp;·&nbsp;
+  <a href="docs/android.md">Build guide</a>
+  &nbsp;·&nbsp;
+  <a href="CONTRIBUTING_ANDROID.md">Contributing</a>
+</p>
+
+**Android 9+ (API 28–35) · Vulkan 1.0+ / GLES 3.0 · Full SAF read & write · In-app updater · 260 FPS uncapped · Java multiplayer**
 
 ---
 
-## What's New in v1.0.0
+## Screenshots
 
-- 🚀 **Full Read/Write Storage Access Framework (SAF)**: Full read, write, copy, move, rename, and directory deletion support across external storage and file managers.
-- 📁 **Integrated Mini File Manager**: Inside the launcher's **Installed** tab, manage your files directly. Includes **Import Folder** (recursive tree import) and **Export Folder** (compresses to zip for easy backup and export).
-- 🔄 **In-App GitHub Auto-Updater**: Instant GitHub Releases detection on startup, background download with animated progress bar, full changelog viewer, and automatic one-tap `.apk` installation.
-- ⚡ **Performance & Frame Uncapping**: Uncapped framerates up to 260 FPS, Battery Saver mode (60 FPS VSync), PowerVR Rogue 32-bit GL compatibility fallback, Fast Chunk Upload pipeline, and dynamic resolution scaling (25%–100%).
-- 🎮 **Next-Gen Mobile Touch Controls**: 4 control styles including MCPE Bedrock touch scheme, dynamic floating joystick, floating Horizon H menu bubble, custom on-screen button editor with opacity and sizing.
-- 🌐 **Java Multiplayer**: Direct connection to Minecraft Java Edition servers and LAN worlds with online/offline mode support.
+<p align="center">
+  <img src="docs/media/volt-plus/launcher.jpg" width="100%" alt="Volt Plus launcher home" />
+</p>
 
----
-
-## Visual Showcase
-
-| **Joystick and Crosshair** | **D-pad and Touch Aiming** |
+| **Mods** | **Resource Packs** |
 | :---: | :---: |
-| ![Fox in a forest with joystick controls](docs/media/android/joystick-fox.png) | ![River and forest with D-pad controls](docs/media/android/dpad-river.png) |
+| ![Mods tab: 260 Horizon mods, one-tap install](docs/media/volt-plus/mods.jpg) | ![Resource packs catalog with Modrinth results](docs/media/volt-plus/resource-packs.jpg) |
 
-| **Snowy Biome** | **Hypixel Arcade · Java Multiplayer** |
+| **Shader Packs** | **Content Library** |
 | :---: | :---: |
-| ![Snowy landscape on Android](docs/media/android/snow-landscape.png) | ![Hypixel Arcade lobby on Android](docs/media/android/hypixel-arcade.png) |
+| ![Shader packs: Horizon and Modrinth catalogs](docs/media/volt-plus/shader-packs.jpg) | ![Installed content: mods, packs and shaders](docs/media/volt-plus/content-library.jpg) |
 
-| **Third-Person View** | **Desert Panorama** |
+| **Skins & Capes Studio** | **Settings** |
 | :---: | :---: |
-| ![Steve on Android with third-person camera](docs/media/android/third-person-desert.png) | ![Desert terrain on Android with touch controls](docs/media/android/desert-panorama.png) |
+| ![Skins and capes studio with the 3D character preview](docs/media/volt-plus/skins.jpg) | ![Settings: video, launcher, controls, diagnostics, account](docs/media/volt-plus/settings.jpg) |
 
 ---
 
-## Key Features
+## What's inside
 
-### 🎮 Custom Mobile Controls
-- **Four Control Styles**: Dynamic Joystick, Fixed D-pad, MCPE Bedrock controls, and Virtual Pointer.
-- **On-Screen Layout Editor**: Freely reposition, resize, and adjust the opacity of every touch widget.
-- **Quick-Action Horizon Menu**: Centered floating menu bubble with instant access to settings, inventory, and perspective toggles.
-- **Hardware Input**: Full support for physical keyboards, mice, Bluetooth controllers, and USB gamepads.
-
-### ⚡ Engine & Rendering
-- **Vulkan & GLES Backends**: Optimized Vulkan renderer with fallback to OpenGL ES for legacy 32-bit and PowerVR devices.
-- **Resolution Scaling**: Scale internal render resolution from 25% to 100% to maximize performance on any chipset.
-- **Low-Latency Audio & Haptics**: High-fidelity sound powered by AAudio, with customizable haptic vibration feedback.
-- **Cave & Entity Culling**: Aggressive GPU-driven occlusion culling to sustain smooth frame pacing in complex scenes.
-
-### 📦 Content & File Management
-- **SAF Document Provider**: Direct read & write access for third-party file managers (`content://com.goydevv.horizon.documents`).
-- **One-Tap Folder Import**: Import custom worlds, resource packs, and shader packs directly from phone storage.
-- **Zip Folder Export**: Compress and export any folder directly through Android's system share/file picker.
-- **Sandboxed Modding**: Support for native Horizon `.hmod` sandboxed content packages.
+- 🚀 **Full read/write storage**: import, export, move, rename and delete across external storage through the Storage Access Framework.
+- 📁 **Content library**: mods (`.hmod`), resource packs and shaders in one place, with a built-in file manager for the folders behind them.
+- 🔄 **In-app updater**: checks GitHub releases on start, downloads in the background, shows the changelog and installs the APK.
+- ⚡ **Performance**: uncapped frame rate up to 260 FPS, battery-saver VSync mode, resolution scaling 25–100 %, fast chunk uploads, cave and entity culling.
+- 🎮 **Touch controls**: four control styles including MCPE Bedrock, dynamic floating joystick, the Volt+ Control Hub and a full on-screen layout editor with opacity and sizing.
+- 🎬 **Screen recorder**: 240p–1440p × 30–165 FPS, microphone / in-game / no audio, raw gameplay (HUD hidden) or with controls, straight into `Movies/VoltPlus`.
+- 🌐 **Java multiplayer**: direct connections to Java Edition servers and LAN worlds, online or offline mode.
 
 ---
 
-## Building from Source
+## Building from source
 
 ### Prerequisites
 - **Android SDK** (API 35, Build-Tools 35.0.0+)
 - **Android NDK** (28.2.13676358 / r28+)
-- **Rust Toolchain** (1.90+ with `aarch64-linux-android` and `armv7-linux-androideabi` targets)
-- **Java Development Kit** (JDK 17 or 21)
-- **Python** (3.10+)
+- **Rust toolchain** (1.90+ with the `aarch64-linux-android` and `armv7-linux-androideabi` targets)
+- **JDK** 17 or 21
+- **Python** 3.10+
 
-### Build APK
+### Build the APK
 ```sh
-# Build ARM64 optimized APK
-python3 tools/android_build.py --abi arm64-v8a --profile release
+# Signed ARM64 build
+python3 tools/android_build.py --abi arm64-v8a --public --profile release
 
-# Build ARMv7 32-bit APK
-python3 tools/android_build.py --abi armeabi-v7a --profile release
+# 32-bit ARM build
+python3 tools/android_build.py --abi armeabi-v7a --public --profile release
 ```
 
-The output APK will be generated under `packaging/android/build/outputs/apk/`.
-
-For complete developer documentation, see [docs/android.md](docs/android.md).
+The output lands under `.local/android/apk/`. Full developer documentation is in [docs/android.md](docs/android.md).
 
 ---
 
 ## Contributing
 
-Contributions, bug reports, and optimizations are welcome!
-- Review [CONTRIBUTING_ANDROID.md](CONTRIBUTING_ANDROID.md) before opening a pull request.
-- Run tests and self-checks:
+Contributions, bug reports and optimisations are welcome.
+- Read [CONTRIBUTING_ANDROID.md](CONTRIBUTING_ANDROID.md) before opening a pull request.
+- Run the self-checks first:
   ```sh
   python3 -m unittest discover -s tests -p 'test_android*.py'
   python3 tools/check_public_tree.py
@@ -106,8 +101,21 @@ Contributions, bug reports, and optimizations are welcome!
 
 ---
 
-## License & Legal
+## License & legal
 
 - Code is licensed under the **[MIT License](LICENSE)**.
-- Minecraft is a trademark of Mojang Synergies AB. This project is not affiliated with, endorsed by, or associated with Mojang or Microsoft.
-- No proprietary game assets, jars, or binary resources are stored within this repository.
+- Minecraft is a trademark of Mojang Synergies AB. This project is not affiliated with, endorsed by or associated with Mojang or Microsoft.
+- No proprietary game assets, jars or binary resources are stored in this repository.
+
+---
+
+<p align="center">
+  <img src="docs/media/volt-plus/owner.jpg" width="220" alt="Volt Plus owner" />
+</p>
+
+<h3 align="center">Owner</h3>
+
+<p align="center">
+  <b>Volt Plus</b> is built and maintained by its owner.<br />
+  Questions, bug reports and builds: <a href="https://discord.gg/WsBxGsKyhU">Discord</a> · <a href="https://github.com/entitybrian69-bit/volt-plus">GitHub</a>
+</p>
