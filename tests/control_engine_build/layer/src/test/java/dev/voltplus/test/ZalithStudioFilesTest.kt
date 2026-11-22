@@ -28,6 +28,21 @@ class ZalithStudioFilesTest {
         } finally { root.deleteRecursively() }
     }
 
+    @Test fun chooserListsOnlySafeBoundedLayouts() {
+        val root = Files.createTempDirectory("studio-list-").toFile()
+        val outside = Files.createTempFile("studio-outside-", ".json").toFile()
+        try {
+            val dir = root.resolve("controls/java/zalith").apply { mkdirs() }
+            val first = dir.resolve("first.json").apply { writeText("{}") }
+            val second = dir.resolve("second.json").apply { writeText("{}") }
+            dir.resolve("large.json").writeBytes(ByteArray(2 * 1024 * 1024 + 1))
+            dir.resolve("ignore.txt").writeText("{}")
+            Files.createSymbolicLink(dir.resolve("link.json").toPath(), outside.toPath())
+            assertEquals(setOf(first, second), ZalithStudioFiles.listLayouts(first, root).toSet())
+            try { ZalithStudioFiles.listLayouts(outside, root); fail("outside source") } catch (_: IllegalArgumentException) { }
+        } finally { root.deleteRecursively(); outside.delete() }
+    }
+
     @Test fun refusesOutsideFilesAndOversizeInput() {
         val root = Files.createTempDirectory("studio-root-").toFile()
         val outside = Files.createTempFile("studio-outside-", ".json").toFile()
