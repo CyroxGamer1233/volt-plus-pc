@@ -113,6 +113,8 @@ pub struct Config {
     #[serde(default = "default_scene_gyro")]
     pub scene_gyro_sensitivity: u32,
     #[serde(default)]
+    pub wallpaper_index: Option<usize>,
+    #[serde(default)]
     pub volt_fullscreen_default_v1: bool,
 }
 
@@ -158,6 +160,7 @@ impl Default for Config {
             max_fps_unlocked_v3: true,
             theme: horizon_client::ui_theme::LauncherThemeConfig::default(),
             scene_gyro_sensitivity: default_scene_gyro(),
+            wallpaper_index: None,
             volt_fullscreen_default_v1: true,
         }
     }
@@ -220,6 +223,7 @@ impl Config {
             config.volt_fullscreen_default_v1 = true;
         }
         config.scene_gyro_sensitivity = config.scene_gyro_sensitivity.min(300);
+        config.wallpaper_index = config.wallpaper_index.filter(|&i| i < crate::wallpapers::WALLPAPERS.len());
         // Ignore saved app registrations while this dev build uses the fixed ID.
         config.microsoft_client_id =
             crate::account::client_id().unwrap_or_else(|| MICROSOFT_CLIENT_ID.into());

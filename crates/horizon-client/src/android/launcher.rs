@@ -59,6 +59,8 @@ pub(super) struct Launcher {
     wallpapers_open: bool,
     wallpaper_worker: Option<mpsc::Receiver<std::result::Result<String, String>>>,
     wallpaper_status: String,
+    wallpaper_has_frame: bool,
+    wallpaper_color: Option<[u8; 3]>,
     targets: Vec<([f32; 4], pages::Action)>,
     list_targets: Vec<([f32; 4], pages::Action)>,
     list_view: Option<[f32; 3]>,
@@ -79,6 +81,21 @@ pub(super) struct Launcher {
 }
 
 impl Launcher {
+    fn start_wallpaper(&mut self) {
+        self.wallpaper_has_frame = false;
+        if let Some(i) = self.catalog.config.wallpaper_index
+            && let Some(item) = crate::wallpapers::WALLPAPERS.get(i)
+            && let Some(path) = crate::wallpapers::path(&self.home, i)
+        {
+            if std::fs::metadata(&path).is_ok_and(|m| m.len() == item.size) {
+                if let Err(e) = crate::native_ime::wallpaper_start(&path, item.width, item.height) {
+                    self.wallpaper_status = format!("Video unavailable: {e}");
+                }
+            } else {
+                self.wallpaper_status = "Download the selected video again.".into();
+            }
+        }
+    }
     pub(super) fn refresh_wardrobe_account(&mut self) {
         if self.catalog.page == Page::Skins {
             self.catalog.scroll = 0.0;
@@ -250,7 +267,9 @@ impl Launcher {
             catalog,
             wallpapers_open: false,
             wallpaper_worker: None,
-            wallpaper_status: "Playback support is not available yet.".into(),
+            wallpaper_status: "Select a video to download or equip it.".into(),
+            wallpaper_has_frame: false,
+            wallpaper_color: None,
             targets: vec![],
             list_targets: vec![],
             list_view: None,
@@ -308,6 +327,7 @@ impl Launcher {
         self.login.refresh_status();
         crate::diagnostics::heartbeat("returned_to_launcher", || serde_json::json!({}));
         self.catalog.page = Page::Play;
+        self.start_wallpaper();
         if let Ok(message) = std::fs::read_to_string(self.home.join("android-error.txt")) {
             self.error = Some(message);
         }
@@ -649,6 +669,9 @@ impl Launcher {
                     return Err(error);
                 }
             };
+            // Stop decoding while the game owns the Android window.
+            crate::native_ime::wallpaper_stop();
+            self.wallpaper_has_frame = false;
             // Android has one native window; release its surface before handing it over.
             self.renderer = None;
             self.window = None;
@@ -713,6 +736,8 @@ impl ApplicationHandler for Launcher {
         if let Err(error) = self.open(events) {
             self.fail(error);
             events.exit();
+        } else {
+            self.start_wallpaper();
         }
     }
     fn suspended(&mut self, events: &ActiveEventLoop) {
@@ -722,6 +747,8 @@ impl ApplicationHandler for Launcher {
         }
         self.drag = None;
         self.focused = false;
+        crate::native_ime::wallpaper_stop();
+        self.wallpaper_has_frame = false;
         let _ = crate::device_runtime::gyro(false, 1.0, 0);
         if let Some(renderer) = &mut self.renderer {
             renderer.suspend_surface();

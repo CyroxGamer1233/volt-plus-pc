@@ -2168,6 +2168,19 @@ impl<'a> Ui<'a> {
         true
     }
 
+    /// Draw a decoded video using a separate full-resolution GPU texture.
+    /// `rgba` is present only when a new frame has arrived.
+    #[allow(clippy::too_many_arguments)]
+    pub fn video_scene(&mut self, w: u32, h: u32, rgba: Option<Vec<u8>>, x: f32, y: f32, dw: f32, dh: f32) {
+        if let Some(rgba) = rgba {
+            self.batch.patches.push(crate::font::Patch { x: u32::MAX, y: u32::MAX, width: w, height: h, rgba });
+        }
+        let start = self.batch.vertices.len();
+        let (x0, y0, x1, y1) = (self.px_x(x), self.px_y(y), self.px_x(x + dw), self.px_y(y + dh));
+        self.emit_clipped_uv(x0, y0, x1, y1, 0.0, 0.0, 1.0, 1.0, u32::MAX);
+        self.batch.blend_since(start, crate::hud::Blend::Video);
+    }
+
     /// Draw a cached RGBA project icon (`w x h`) into `(x, y, dw, dh)` dp.
     #[allow(clippy::too_many_arguments)]
     pub fn image(

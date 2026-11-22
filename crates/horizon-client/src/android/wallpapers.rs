@@ -1,5 +1,5 @@
 //! Original-quality wallpaper catalog and bounded, verified downloads.
-//! Playback/compositing is deliberately not exposed until the Vulkan video path exists.
+//! The original H.264 files are decoded on Android without recompressing them.
 use sha2::{Digest, Sha256};
 use std::{io::{Read, Write}, path::{Path, PathBuf}, time::Duration};
 
@@ -9,17 +9,19 @@ pub struct Wallpaper {
     pub size: u64,
     pub sha256: &'static str,
     pub resolution: &'static str,
+    pub width: u32,
+    pub height: u32,
 }
 
 pub const WALLPAPERS: [Wallpaper; 5] = [
-    Wallpaper { name: "Aurora night cabin", filename: "aurora.mp4", size: 8_272_647, sha256: "1785dbd85c19788dacdec03f0bc2f82656b4e66e90a071e7fbc97fcc39479d5a", resolution: "4K" },
-    Wallpaper { name: "Cherry sunrise valley", filename: "cherry-sunrise.mp4", size: 5_930_493, sha256: "e87d9e48adebd0f5624255a9aecb6c78285fa85971b61a617135b48992f88f7e", resolution: "4K" },
-    Wallpaper { name: "Minecraft Earth", filename: "earth.mp4", size: 14_365_508, sha256: "4253f906602eccad70b74f7db4c3bfb63e5a2e8c8d6a3082a307aadd308f11ad", resolution: "4K" },
-    Wallpaper { name: "Peaceful greenhouse", filename: "greenhouse.mp4", size: 11_862_687, sha256: "95e479d8e9428630a8245e6371bcf810ba15e65ae4340047a893572a7f6a0d15", resolution: "1080p" },
-    Wallpaper { name: "Sakura blossom house", filename: "sakura-house.mp4", size: 9_270_425, sha256: "ed7f53d57cb874725b870a8f571d30fb20e1b9047a51fe2bce3b254293bd285e", resolution: "1080p" },
+    Wallpaper { name: "Aurora night cabin", filename: "aurora.mp4", size: 8_272_647, sha256: "1785dbd85c19788dacdec03f0bc2f82656b4e66e90a071e7fbc97fcc39479d5a", resolution: "4K", width: 3840, height: 2160 },
+    Wallpaper { name: "Cherry sunrise valley", filename: "cherry-sunrise.mp4", size: 5_930_493, sha256: "e87d9e48adebd0f5624255a9aecb6c78285fa85971b61a617135b48992f88f7e", resolution: "4K", width: 3840, height: 2160 },
+    Wallpaper { name: "Minecraft Earth", filename: "earth.mp4", size: 14_365_508, sha256: "4253f906602eccad70b74f7db4c3bfb63e5a2e8c8d6a3082a307aadd308f11ad", resolution: "4K", width: 3840, height: 2160 },
+    Wallpaper { name: "Peaceful greenhouse", filename: "greenhouse.mp4", size: 11_862_687, sha256: "95e479d8e9428630a8245e6371bcf810ba15e65ae4340047a893572a7f6a0d15", resolution: "1080p", width: 1920, height: 1080 },
+    Wallpaper { name: "Sakura blossom house", filename: "sakura-house.mp4", size: 9_270_425, sha256: "ed7f53d57cb874725b870a8f571d30fb20e1b9047a51fe2bce3b254293bd285e", resolution: "1080p", width: 1920, height: 1080 },
 ];
 
-fn digest_file(path: &Path, expected_size: u64) -> Result<String, String> {
+pub fn digest_file(path: &Path, expected_size: u64) -> Result<String, String> {
     let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
     if file.metadata().map_err(|e| e.to_string())?.len() != expected_size {
         return Err("File size does not match".into());
@@ -65,4 +67,38 @@ pub fn download(home: &Path, index: usize) -> Result<String, String> {
     })();
     if result.is_err() { let _ = std::fs::remove_file(&tmp); }
     result.map(|()| format!("{} downloaded in original quality", item.name))
+}
+
+/// Sample a bounded number of decoded pixels for a scene-matching glass tint.
+pub fn sample_color(bytes: &[u8]) -> Option<[u8; 3]> {
+    if bytes.len() < 4 || bytes.len() % 4 != 0 { return None; }
+    let count = bytes.len() / 4;
+    let step = (count / 1024).max(1);
+    let mut sum = [0u64; 3];
+    let mut n = 0u64;
+    for pixel in bytes.chunks_exact(4).step_by(step) {
+        for c in 0..3 { sum[c] += u64::from(pixel[c]); }
+        n += 1;
+    }
+    Some([(sum[0] / n) as u8, (sum[1] / n) as u8, (sum[2] / n) as u8])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn catalog_dimensions_match_originals() {
+        for item in &WALLPAPERS {
+            assert!(matches!((item.width, item.height), (3840, 2160) | (1920, 1080)));
+            assert_eq!(item.sha256.len(), 64);
+        }
+    }
+
+    #[test]
+    fn sampled_color_tracks_video_pixels_and_rejects_bad_frames() {
+        assert_eq!(sample_color(&[]), None);
+        assert_eq!(sample_color(&[1, 2, 3]), None);
+        assert_eq!(sample_color(&[100, 50, 200, 255, 200, 150, 0, 255]), Some([150, 100, 100]));
+    }
 }

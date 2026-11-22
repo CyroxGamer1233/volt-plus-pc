@@ -864,3 +864,54 @@ pub fn refresh_bounds() {
         }
     }
 }
+
+/// Start or stop the wallpaper decoder; it performs GL/media work on its own looper.
+pub fn wallpaper_start(path: &std::path::Path, width: u32, height: u32) -> Result<(), String> {
+    let ui = UI.get().ok_or("Android activity is not ready")?;
+    let mut env = ui.vm.attach_current_thread().map_err(|e| e.to_string())?;
+    let result = env.with_local_frame(8, |env| -> jni::errors::Result<()> {
+        let path = JObject::from(env.new_string(path.to_string_lossy().as_ref())?);
+        env.call_method(&ui.activity, "startWallpaper", "(Ljava/lang/String;II)V",
+            &[JValue::Object(&path), JValue::Int(width as i32), JValue::Int(height as i32)])?;
+        Ok(())
+    });
+    if result.is_err() { let _ = env.exception_clear(); }
+    result.map_err(|e| e.to_string())
+}
+
+pub fn wallpaper_stop() {
+    if let Some(ui) = UI.get() && let Ok(mut env) = ui.vm.attach_current_thread() {
+        if env.call_method(&ui.activity, "stopWallpaper", "()V", &[]).is_err() { let _ = env.exception_clear(); }
+    }
+}
+
+/// Copy one native-resolution frame while the decoder's single buffer is held.
+pub fn wallpaper_frame(expected: usize) -> Option<Vec<u8>> {
+    let ui = UI.get()?;
+    let mut env = ui.vm.attach_current_thread().ok()?;
+    let result = env.with_local_frame(8, |env| -> jni::errors::Result<Option<Vec<u8>>> {
+        let obj = env.call_method(&ui.activity, "acquireWallpaperFrame", "()Ljava/nio/ByteBuffer;", &[])?.l()?;
+        if obj.is_null() { return Ok(None); }
+        let buffer = jni::objects::JByteBuffer::from(obj);
+        let copy = match (env.get_direct_buffer_address(&buffer), env.get_direct_buffer_capacity(&buffer)) {
+            (Ok(address), Ok(capacity)) if capacity == expected && expected <= 40_000_000 => {
+                // The decoder cannot mutate the direct buffer until releaseWallpaperFrame.
+                Some(unsafe { std::slice::from_raw_parts(address, capacity) }.to_vec())
+            }
+            _ => None,
+        };
+        env.call_method(&ui.activity, "releaseWallpaperFrame", "()V", &[])?;
+        Ok(copy)
+    });
+    match result { Ok(frame) => frame, Err(_) => { let _ = env.exception_clear(); None } }
+}
+
+pub fn wallpaper_status() -> Option<String> {
+    let ui = UI.get()?;
+    let mut env = ui.vm.attach_current_thread().ok()?;
+    let result = env.with_local_frame(8, |env| -> jni::errors::Result<String> {
+        let obj = env.call_method(&ui.activity, "wallpaperStatus", "()Ljava/lang/String;", &[])?.l()?;
+        Ok(env.get_string(&jni::objects::JString::from(obj))?.into())
+    });
+    match result { Ok(status) => Some(status), Err(_) => { let _ = env.exception_clear(); None } }
+}

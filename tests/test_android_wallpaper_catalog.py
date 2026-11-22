@@ -19,6 +19,20 @@ class WallpaperCatalogTest(unittest.TestCase):
                 self.assertEqual(hashlib.sha256(data).hexdigest(), expected)
                 self.assertEqual(data[4:8], b"ftyp")
 
+    def test_playback_retains_native_resolution_and_stops_for_game(self):
+        source = (ROOT / "crates/horizon-client/src/android/wallpapers.rs").read_text()
+        self.assertEqual(source.count('width: 3840, height: 2160'), 3)
+        self.assertEqual(source.count('width: 1920, height: 1080'), 2)
+        player = (ROOT / "packaging/android/java/dev/horizon/android/WallpaperPlayer.java").read_text()
+        self.assertIn('m.setLooping(true)', player)
+        self.assertIn('surfaceTexture.setDefaultBufferSize(w, h)', player)
+        self.assertIn('GLES20.glReadPixels(0, 0, width, height', player)
+        launcher = (ROOT / "crates/horizon-client/src/android/launcher.rs").read_text()
+        self.assertIn('crate::native_ime::wallpaper_stop();', launcher)
+        renderer = (ROOT / "crates/horizon-client-render/src/hud.rs").read_text()
+        self.assertIn('Blend::Video => &self.pipeline', renderer)
+        self.assertIn('label: Some("Launcher wallpaper video")', renderer)
+
     def test_no_unverified_or_partial_file_is_installed(self):
         source = (ROOT / "crates/horizon-client/src/android/wallpapers.rs").read_text()
         self.assertIn('take(item.size + 1)', source)

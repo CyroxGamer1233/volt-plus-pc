@@ -1045,6 +1045,8 @@ pub enum Blend {
     /// `RenderPipelines.END_PORTAL` as a GUI fill: the End portal's layers
     /// projected from the screen (`HudBatch::end_portal` sets the textures).
     EndPortal,
+    /// Separate full-resolution video texture, used only by the Android launcher.
+    Video,
 }
 /// What a `Blend::EndPortal` fill samples: the atlas rects (u0, v0, width,
 /// height) of `end_sky.png` and `end_portal.png`, and the `GameTime` uniform.
@@ -1782,6 +1784,12 @@ pub struct HudRenderer {
     vignette_pipeline: wgpu::RenderPipeline,
     end_portal_pipeline: wgpu::RenderPipeline,
     group: wgpu::BindGroup,
+    video_layout: wgpu::BindGroupLayout,
+    video_sampler: wgpu::Sampler,
+    video_glint_view: wgpu::TextureView,
+    video_glint_sampler: wgpu::Sampler,
+    video_texture: Option<wgpu::Texture>,
+    video_group: Option<wgpu::BindGroup>,
     uniform: wgpu::Buffer,
     buffer: wgpu::Buffer,
     capacity: u64,
@@ -2015,6 +2023,17 @@ impl HudRenderer {
             vignette_pipeline,
             end_portal_pipeline,
             group,
+            video_layout: layout,
+            video_sampler: device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("Wallpaper linear sampler"),
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                ..Default::default()
+            }),
+            video_glint_view: glint_view.clone(),
+            video_glint_sampler: glint_sampler.clone(),
+            video_texture: None,
+            video_group: None,
             uniform,
             buffer,
             capacity,
@@ -2130,6 +2149,41 @@ impl HudRenderer {
         size: [u32; 2],
     ) {
         self.upload_patches(uploads, encoder, &batch.patches);
+        // A sentinel patch targets a dedicated texture, not the glyph atlas.
+        // Keep the last frame on the GPU when the decoder has no new frame.
+        if let Some(p) = batch.patches.iter().rev().find(|p| p.x == u32::MAX && p.y == u32::MAX) {
+            let limit = device.limits().max_texture_dimension_2d;
+            let valid = p.width > 0 && p.height > 0 && p.width <= limit && p.height <= limit
+                && (p.width as usize).checked_mul(p.height as usize).and_then(|n| n.checked_mul(4)) == Some(p.rgba.len());
+            if valid {
+                if self.video_texture.as_ref().is_none_or(|t| t.width() != p.width || t.height() != p.height) {
+                    let texture = device.create_texture(&wgpu::TextureDescriptor {
+                        label: Some("Launcher wallpaper video"),
+                        size: wgpu::Extent3d { width: p.width, height: p.height, depth_or_array_layers: 1 },
+                        mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2,
+                        format: wgpu::TextureFormat::Rgba8Unorm,
+                        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                        view_formats: &[],
+                    });
+                    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+                    self.video_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("Launcher wallpaper bindings"), layout: &self.video_layout,
+                        entries: &[
+                            wgpu::BindGroupEntry { binding: 0, resource: self.uniform.as_entire_binding() },
+                            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&view) },
+                            wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&self.video_sampler) },
+                            wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&self.video_glint_view) },
+                            wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::Sampler(&self.video_glint_sampler) },
+                        ],
+                    }));
+                    self.video_texture = Some(texture);
+                }
+                if let Some(texture) = &self.video_texture {
+                    uploads.texture(encoder, wgpu::TexelCopyTextureInfo { texture, mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All }, p.width, p.height, &p.rgba);
+                }
+            }
+        }
         if batch.vertices.is_empty() || size.contains(&0) {
             return;
         }
@@ -2255,7 +2309,17 @@ impl HudRenderer {
                     Blend::Depth(_) => &self.depth_pipeline,
                     Blend::Vignette => &self.vignette_pipeline,
                     Blend::EndPortal => &self.end_portal_pipeline,
+                    Blend::Video => &self.pipeline,
                 };
+                if *blend == Blend::Video {
+                    if let Some(group) = &self.video_group {
+                        pass.set_bind_group(0, group, &[]);
+                        pass.set_pipeline(pipeline);
+                        pass.draw(range.clone(), 0..1);
+                        pass.set_bind_group(0, &self.group, &[]);
+                    }
+                    continue;
+                }
                 match &self.pack_text {
                     Some(pack_text) if *blend == Blend::Alpha => {
                         for (part, text) in pack_text::text_runs(&batch.vertices, range.clone()) {
@@ -2282,6 +2346,18 @@ impl HudRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn video_runs_are_isolated_from_atlas_runs() {
+        let mut batch = HudBatch::new([320, 240]);
+        let quad = [[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]];
+        batch.quad(quad, [[0.0; 2]; 4], u32::MAX);
+        let start = batch.vertices.len();
+        batch.quad(quad, [[0.0; 2]; 4], u32::MAX);
+        batch.blend_since(start, Blend::Video);
+        batch.quad(quad, [[0.0; 2]; 4], u32::MAX);
+        assert_eq!(batch.runs(), vec![(0..6, Blend::Alpha), (6..12, Blend::Video), (12..18, Blend::Alpha)]);
+    }
+
     #[test]
     fn inset_only_moves_the_information_overlay_not_controls_or_viewport() {
         let mut batch = HudBatch::new([1280, 720]);

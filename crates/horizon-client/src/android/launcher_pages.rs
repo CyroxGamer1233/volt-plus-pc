@@ -273,6 +273,8 @@ pub(super) enum Action {
     OpenWallpapers,
     CloseWallpapers,
     DownloadWallpaper(usize),
+    EquipWallpaper(usize),
+    ClearWallpaper,
     SettingsCat(SettingsCategory),
     Play,
     PauseInstall,
@@ -1243,6 +1245,21 @@ impl Launcher {
         glass.accent_text = color::hex(0xeee6ff, 255);
         glass.text_primary = color::hex(0xffffff, 255);
         glass.text_muted = color::hex(0xd9d3e5, 255);
+        if let Some([r, g, b]) = self.wallpaper_color.filter(|_| self.catalog.config.wallpaper_index.is_some()) {
+            let rgb = |r: u8, g: u8, b: u8| (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b);
+            let dark = |v: u8| (u16::from(v) * 18 / 100 + 12).min(90) as u8;
+            let medium = |v: u8| (u16::from(v) * 55 / 100 + 50).min(215) as u8;
+            let light = |v: u8| (u16::from(v) * 50 / 100 + 128).min(245) as u8;
+            glass.surface = color::hex(rgb(dark(r), dark(g), dark(b)), 185);
+            glass.surface_dim = color::hex(rgb(dark(r), dark(g), dark(b)), 165);
+            glass.surface_bright = color::hex(rgb(medium(r), medium(g), medium(b)), 185);
+            glass.surface_selected = color::hex(rgb(medium(r), medium(g), medium(b)), 165);
+            glass.border = color::hex(rgb(light(r), light(g), light(b)), 165);
+            glass.border_strong = color::hex(rgb(light(r), light(g), light(b)), 220);
+            glass.accent = color::hex(rgb(light(r), light(g), light(b)), 255);
+            glass.accent_soft = color::hex(rgb(medium(r), medium(g), medium(b)), 145);
+            glass.accent_text = glass.accent;
+        }
         horizon_client::ui_theme::set_active_theme(glass);
         let result = self.draw_pages_with(&mut r, &gui);
         horizon_client::ui_theme::set_active_theme(saved_theme);
@@ -1319,6 +1336,31 @@ impl Launcher {
             let x = -dx + self.anim.scene_offset[0] * dx * 0.95;
             let y = -dy + self.anim.scene_offset[1] * dy * 0.95;
             ui.scene_image(scene.width(), scene.height(), scene.as_raw(), x, y, sw, sh);
+        }
+        if self.focused && let Some(index) = self.catalog.config.wallpaper_index
+            && let Some(item) = crate::wallpapers::WALLPAPERS.get(index)
+        {
+            let expected = item.width as usize * item.height as usize * 4;
+            let frame = crate::native_ime::wallpaper_frame(expected);
+            if let Some(bytes) = frame.as_ref() {
+                self.wallpaper_has_frame = true;
+                if let Some(sample) = crate::wallpapers::sample_color(bytes) {
+                    self.wallpaper_color = Some(match self.wallpaper_color {
+                        Some(old) => std::array::from_fn(|i| ((u16::from(old[i]) * 15 + u16::from(sample[i])) / 16) as u8),
+                        None => sample,
+                    });
+                }
+            }
+            if self.wallpaper_has_frame {
+                let scale = (w / item.width as f32).max(full_h / item.height as f32) * 1.30;
+                let sw = item.width as f32 * scale;
+                let sh = item.height as f32 * scale;
+                let dx = (sw - w) * 0.5;
+                let dy = (sh - full_h) * 0.5;
+                let x = -dx + self.anim.scene_offset[0] * dx * 0.95;
+                let y = -dy + self.anim.scene_offset[1] * dy * 0.95;
+                ui.video_scene(item.width, item.height, frame, x, y, sw, sh);
+            }
         }
         // A restrained veil keeps the landscape visible and the white controls readable.
         ui.fill(0.0, 0.0, w, full_h, color::hex(0x10111d, 42));
@@ -2196,6 +2238,7 @@ impl Launcher {
             ui.rounded(mx, my, mw, mh, 18.0, my3_surface());
             ui.border(mx, my, mw, mh, 18.0, my3_border());
             ui.text(Face::SemiBold, 17.0, mx + 16.0, my + 12.0, my3_text(), "Background images");
+            button(&mut ui, &mut self.targets, [mx + mw - 156.0, my + 8.0, 74.0, 30.0], "Default", Action::ClearWallpaper, false);
             button(&mut ui, &mut self.targets, [mx + mw - 76.0, my + 8.0, 64.0, 30.0], "Close", Action::CloseWallpapers, false);
             let grid_y = my + 48.0;
             let row_h = ((mh - 112.0) / 5.0).clamp(23.0, 42.0);
@@ -2204,12 +2247,18 @@ impl Launcher {
                 let label = format!("{}  ·  {}  ·  {:.1} MB", item.name, item.resolution, item.size as f64 / 1_000_000.0);
                 let fitted = ui.fit_text(Face::Regular, 11.0, &label, (mw - 132.0).max(50.0));
                 ui.text(Face::Regular, 11.0, mx + 16.0, y + 6.0, my3_text(), &fitted);
-                let title = if self.wallpaper_worker.is_some() { "Busy" } else { "Download" };
-                button(&mut ui, &mut self.targets, [mx + mw - 108.0, y, 92.0, row_h - 2.0], title, Action::DownloadWallpaper(i), false);
+                let downloaded = crate::wallpapers::path(&self.home, i)
+                    .and_then(|p| std::fs::metadata(p).ok()).is_some_and(|m| m.len() == item.size);
+                let selected = self.catalog.config.wallpaper_index == Some(i);
+                let title = if self.wallpaper_worker.is_some() { "Busy" } else if selected { "Equipped" } else if downloaded { "Equip" } else { "Download" };
+                let action = if downloaded { Action::EquipWallpaper(i) } else { Action::DownloadWallpaper(i) };
+                button(&mut ui, &mut self.targets, [mx + mw - 108.0, y, 92.0, row_h - 2.0], title, action, selected);
             }
-            let line = ui.fit_text(Face::Regular, 10.0, &self.wallpaper_status, mw - 32.0);
+            let playback = crate::native_ime::wallpaper_status().unwrap_or_default();
+            let message = if !playback.is_empty() && self.wallpaper_worker.is_none() { &playback } else { &self.wallpaper_status };
+            let line = ui.fit_text(Face::Regular, 10.0, message, mw - 32.0);
             ui.text(Face::Regular, 10.0, mx + 16.0, my + mh - 34.0, my3_muted(), &line);
-            ui.text(Face::Regular, 9.0, mx + 16.0, my + mh - 19.0, my3_muted(), "Live playback and equip are not available yet.");
+            ui.text(Face::Regular, 9.0, mx + 16.0, my + mh - 19.0, my3_muted(), "Download once, then equip. Original video quality.");
         }
         if self.diagnostics_modal_open {
             self.draw_diagnostics_summary_modal(&mut ui, w, h);
@@ -7295,6 +7344,26 @@ impl Launcher {
                         self.catalog.search(&self.home);
                     }
                 }
+            }
+            Some(Action::EquipWallpaper(i)) => {
+                if self.wallpaper_worker.is_none() && let Some(item) = crate::wallpapers::WALLPAPERS.get(i)
+                    && let Some(path) = crate::wallpapers::path(&self.home, i)
+                    && std::fs::metadata(path).is_ok_and(|m| m.len() == item.size)
+                {
+                    self.catalog.config.wallpaper_index = Some(i);
+                    self.catalog.config.save(&self.home)?;
+                    self.wallpaper_color = None;
+                    self.wallpaper_status = format!("Equipped {}", item.name);
+                    self.start_wallpaper();
+                }
+            }
+            Some(Action::ClearWallpaper) => {
+                crate::native_ime::wallpaper_stop();
+                self.catalog.config.wallpaper_index = None;
+                self.catalog.config.save(&self.home)?;
+                self.wallpaper_has_frame = false;
+                self.wallpaper_color = None;
+                self.wallpaper_status = "Default background selected".into();
             }
             Some(Action::OpenWallpapers) => { self.wallpapers_open = true; }
             Some(Action::CloseWallpapers) => { self.wallpapers_open = false; }
