@@ -20711,8 +20711,16 @@ impl Loading {
         #[cfg(target_os = "android")]
         self.menu_android_keyboard();
         #[cfg(target_os = "android")]
-        for (token, down) in horizon_client::java_controls::drain_tokens() {
-            self.startup_dispatch_custom_token(event_loop, token, down);
+        {
+            if self.menu.control_input_unfocused {
+                // Discard late overlay events while the activity is unfocused.
+                horizon_client::java_controls::release_tokens();
+                let _ = horizon_client::java_controls::drain_tokens();
+            } else {
+                for (token, down) in horizon_client::java_controls::drain_tokens() {
+                    self.startup_dispatch_custom_token(event_loop, token, down);
+                }
+            }
         }
         #[cfg(target_os = "android")]
         if let Err(error) = self.menu_gamepad_frame(event_loop) {

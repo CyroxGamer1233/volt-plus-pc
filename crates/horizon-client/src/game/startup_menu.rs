@@ -17,6 +17,8 @@ pub(super) struct StartupMenu {
     #[cfg(target_os = "android")]
     keyboard_focus: Option<horizon_client::widgets::Target>,
     #[cfg(target_os = "android")]
+    pub(super) control_input_unfocused: bool,
+    #[cfg(target_os = "android")]
     keyboard_navigation: bool,
     #[cfg(target_os = "android")]
     controller_edges: horizon_client::gamepad::Edges,
@@ -2191,6 +2193,14 @@ impl Loading {
                 }
             }
             WindowEvent::Focused(false) => {
+                #[cfg(target_os = "android")]
+                {
+                    horizon_client::java_controls::release_tokens();
+                    for (token, down) in horizon_client::java_controls::drain_tokens() {
+                        self.startup_dispatch_custom_token(event_loop, token, down);
+                    }
+                    self.menu.control_input_unfocused = true;
+                }
                 self.menu.modifiers = ModifiersState::empty();
                 self.menu.physical_keys.clear();
                 self.menu.dragging = false;
@@ -2201,6 +2211,8 @@ impl Loading {
                 let events = self.menu.options.release();
                 self.menu_option_events(events);
             }
+            #[cfg(target_os = "android")]
+            WindowEvent::Focused(true) => self.menu.control_input_unfocused = false,
             WindowEvent::KeyboardInput { event, .. }
                 if event.state == ElementState::Pressed && self.menu.pending.is_some() =>
             {
