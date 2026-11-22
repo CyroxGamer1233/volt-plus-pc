@@ -17,6 +17,9 @@ ASSETS = {'assets/engine-data.zip', 'assets/bedrock-controls.zip'}
 # AndroidX build-time optimization profiles, not player/account profiles.
 BUILD_ASSETS = {'assets/dexopt/baseline.prof', 'assets/dexopt/baseline.profm'}
 LICENSE_ASSETS = {'assets/LICENSE.txt', 'assets/THIRD_PARTY_NOTICES.md'}
+# The user-provided intro is the only additional media allowed in a release APK.
+INTRO_ASSET = 'assets/intro.mp4'
+INTRO_SHA256 = '7917a156073ebf9b6534881764eb350e7b51f9929d61416d8d758868c722cccd'
 PRIVATE_PARTS = {'accounts', 'accounts.json', 'session.json', 'session-file.json',
                  'control.json', 'servers.dat', 'level.dat', 'options.txt',
                  'android-launch.json', 'android-launcher.json', 'saves', 'profiles',
@@ -58,9 +61,11 @@ def inspect_payload(path, public=False):
                 raise ValueError('APK exceeds audit decompression limits')
             if any(part.lower() in PRIVATE_PARTS for part in parts) or PurePosixPath(name).suffix.lower() in PRIVATE_SUFFIXES:
                 findings.append({'path': full, 'kind': 'private_file'})
-            if depth == 0 and name.startswith('assets/') and name not in ASSETS | BUILD_ASSETS | LICENSE_ASSETS:
+            if depth == 0 and name.startswith('assets/') and name not in ASSETS | BUILD_ASSETS | LICENSE_ASSETS | {INTRO_ASSET}:
                 findings.append({'path': full, 'kind': 'unexpected_asset'})
             data = archive.read(entry)
+            if depth == 0 and name == INTRO_ASSET and hashlib.sha256(data).hexdigest() != INTRO_SHA256:
+                findings.append({'path': full, 'kind': 'intro_checksum'})
             for kind, pattern in PATTERNS.items():
                 if pattern.search(data):
                     findings.append({'path': full, 'kind': kind})
