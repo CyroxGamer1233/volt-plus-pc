@@ -46,6 +46,13 @@ jobs:
           python3 - <<'PY'
           import os
           from pathlib import Path
+          import xml.etree.ElementTree as ET
+          for report in Path('tests/control_engine_build').glob('*/build/test-results/testDebugUnitTest/TEST-*.xml'):
+              suite = ET.parse(report).getroot()
+              for case in suite.findall('testcase'):
+                  for fail in case.findall('failure'):
+                      detail = (fail.get('message', '') + ' ' + (fail.text or ''))[:1800]
+                      print('::notice::' + (case.get('name', '') + ': ' + detail).replace('%','%25').replace('\n','%0A'))
           p = Path(os.environ['RUNNER_TEMP']) / 'controls-build.log'
           if p.exists():
               lines = p.read_text(errors='replace').splitlines()
