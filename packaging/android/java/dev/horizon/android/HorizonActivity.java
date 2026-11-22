@@ -51,6 +51,7 @@ public final class HorizonActivity extends android.app.NativeActivity {
             final Class<?> studio = Class.forName("dev.horizon.android.control.ZalithStudioActivity", false, getClassLoader());
             final android.content.Intent intent = new android.content.Intent(this, studio);
             intent.putExtra("layout_path", layoutPath);
+            intent.putExtra("choose_layout", true);
             runOnUiThread(new Runnable() {
                 @Override public void run() {
                     try { startActivity(intent); }

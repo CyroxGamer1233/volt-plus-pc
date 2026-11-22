@@ -5810,7 +5810,7 @@ impl Launcher {
                 if zalith_studio_available {
                     rows.insert(4, (
                         "Zalith Control Studio (Experimental)",
-                        "Edits the latest saved Zalith layout; gameplay integration is not available yet",
+                        "Choose a saved Zalith layout to edit; gameplay integration is not available yet",
                         SettingControl::Button("Open Studio", Action::OpenExperimentalZalithStudio, false),
                     ));
                 }

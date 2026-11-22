@@ -30,6 +30,39 @@ class ZalithStudioActivity : ComponentActivity() {
             finish()
             return
         }
+        if (!intent.getBooleanExtra("choose_layout", false)) {
+            openEditor(requireNotNull(source), model)
+            return
+        }
+        // Only enumerate the already-validated, app-private profile directory.
+        val files = requireNotNull(source).parentFile?.listFiles()
+            ?.filter { it.isFile && it.name.endsWith(".json") && it.length() <= 2L * 1024 * 1024 }
+            ?.sortedWith(compareByDescending<File> { it.lastModified() }.thenBy { it.name })
+            ?.take(200).orEmpty()
+        if (files.isEmpty()) { finish(); return }
+        val labels = files.map { file ->
+            val name = file.name.removeSuffix(".json")
+            if (name.matches(Regex("[a-f0-9]{64}"))) "Layout ${name.take(12)}" else name.take(60)
+        }.toTypedArray()
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Choose a Zalith layout to edit")
+            .setItems(labels) { _, index ->
+                try {
+                    val file = files[index]
+                    val selected = if (file == source) model else ZalithStudioFiles.load(file, filesDir)
+                    openEditor(file, selected)
+                } catch (e: Exception) {
+                    Log.w("VoltJavaControls", "Could not open selected layout", e)
+                    Toast.makeText(this, "Could not open layout: ${e.message}", Toast.LENGTH_LONG).show()
+                    finish()
+                }
+            }
+            .setNegativeButton("Cancel") { _, _ -> finish() }
+            .setOnCancelListener { finish() }
+            .show()
+    }
+
+    private fun openEditor(source: File, model: com.movtery.layer_controller.observable.ObservableControlLayout) {
         var saving = false
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
@@ -44,7 +77,7 @@ class ZalithStudioActivity : ComponentActivity() {
                             lifecycleScope.launch {
                                 try {
                                     val saved = withContext(Dispatchers.IO) {
-                                        ZalithStudioFiles.saveCopy(source!!, filesDir, packed)
+                                        ZalithStudioFiles.saveCopy(source, filesDir, packed)
                                     }
                                     setResult(Activity.RESULT_OK, Intent().putExtra("layout_path", saved.path))
                                     Toast.makeText(this@ZalithStudioActivity, "Saved a new layout copy", Toast.LENGTH_SHORT).show()
