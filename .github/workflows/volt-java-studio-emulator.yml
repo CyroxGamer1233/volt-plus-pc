@@ -33,7 +33,7 @@ jobs:
           target: google_apis
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           disable-animations: true
-          script: bash -c 'set -o pipefail; cd tests/control_engine_build && gradle :layer:connectedDebugAndroidTest --stacktrace 2>&1 | tee "$RUNNER_TEMP/studio-emulator.log"'
+          script: bash -c 'set -o pipefail; cd tests/control_engine_build && gradle :layer:connectedDebugAndroidTest --stacktrace 2>&1 | tee "$RUNNER_TEMP/studio-emulator.log"; status=${PIPESTATUS[0]}; adb logcat -d -s VoltJavaControls:V > "$RUNNER_TEMP/studio-logcat.log"; exit "$status"'
       - name: Summarize test failures
         if: failure()
         run: |
@@ -53,4 +53,8 @@ jobs:
               for i, line in enumerate(lines):
                   if ' error:' in line or line.startswith('e: ') or line.startswith('* What went wrong:') or 'FAILURES!!!' in line or 'Exception' in line and ('Caused by' in line or 'Error' in line):
                       for row in lines[i:i+5]: print('::notice::' + row[:350].replace('%','%25'))
+          logcat = Path(os.environ['RUNNER_TEMP']) / 'studio-logcat.log'
+          if logcat.exists():
+              for line in logcat.read_text(errors='replace').splitlines()[-50:]:
+                  print('::notice::' + line[:350].replace('%','%25'))
           PY
