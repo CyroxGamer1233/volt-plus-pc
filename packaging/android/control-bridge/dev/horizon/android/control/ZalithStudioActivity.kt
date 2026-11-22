@@ -21,24 +21,23 @@ class ZalithStudioActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val path = intent.getStringExtra("layout_path")
         val source = path?.let(::File)
-        val model = try {
-            requireNotNull(source) { "No layout was selected" }
-            ZalithStudioFiles.load(source, filesDir)
-        } catch (e: Exception) {
-            Log.w("VoltJavaControls", "Could not open Zalith editor", e)
-            Toast.makeText(this, "Could not open layout: ${e.message}", Toast.LENGTH_LONG).show()
+        if (source == null) {
+            Toast.makeText(this, "No layout was selected", Toast.LENGTH_LONG).show()
             finish()
             return
         }
         if (!intent.getBooleanExtra("choose_layout", false)) {
-            openEditor(requireNotNull(source), model)
+            loadEditor(source)
             return
         }
-        // Only enumerate the already-validated, app-private profile directory.
-        val files = requireNotNull(source).parentFile?.listFiles()
-            ?.filter { it.isFile && it.name.endsWith(".json") && it.length() <= 2L * 1024 * 1024 }
-            ?.sortedWith(compareByDescending<File> { it.lastModified() }.thenBy { it.name })
-            ?.take(200).orEmpty()
+        val files = try {
+            ZalithStudioFiles.listLayouts(source, filesDir)
+        } catch (e: Exception) {
+            Log.w("VoltJavaControls", "Could not list Zalith layouts", e)
+            Toast.makeText(this, "Could not open layouts: ${e.message}", Toast.LENGTH_LONG).show()
+            finish()
+            return
+        }
         if (files.isEmpty()) { finish(); return }
         val labels = files.map { file ->
             val name = file.name.removeSuffix(".json")
@@ -47,19 +46,21 @@ class ZalithStudioActivity : ComponentActivity() {
         android.app.AlertDialog.Builder(this)
             .setTitle("Choose a Zalith layout to edit")
             .setItems(labels) { _, index ->
-                try {
-                    val file = files[index]
-                    val selected = if (file == source) model else ZalithStudioFiles.load(file, filesDir)
-                    openEditor(file, selected)
-                } catch (e: Exception) {
-                    Log.w("VoltJavaControls", "Could not open selected layout", e)
-                    Toast.makeText(this, "Could not open layout: ${e.message}", Toast.LENGTH_LONG).show()
-                    finish()
-                }
+                loadEditor(files[index])
             }
             .setNegativeButton("Cancel") { _, _ -> finish() }
             .setOnCancelListener { finish() }
             .show()
+    }
+
+    private fun loadEditor(source: File) {
+        try {
+            openEditor(source, ZalithStudioFiles.load(source, filesDir))
+        } catch (e: Exception) {
+            Log.w("VoltJavaControls", "Could not open selected layout", e)
+            Toast.makeText(this, "Could not open layout: ${e.message}", Toast.LENGTH_LONG).show()
+            finish()
+        }
     }
 
     private fun openEditor(source: File, model: com.movtery.layer_controller.observable.ObservableControlLayout) {

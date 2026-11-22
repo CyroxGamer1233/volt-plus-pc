@@ -26,6 +26,19 @@ object ZalithStudioFiles {
         return file
     }
 
+    /** Enumerate only validated regular paths next to the imported file. */
+    fun listLayouts(source: File, privateRoot: File): List<File> {
+        val file = checked(source, privateRoot)
+        return file.parentFile?.listFiles().orEmpty().asSequence()
+            .filter { it.name.endsWith(".json") }
+            .mapNotNull { candidate ->
+                try { checked(candidate, privateRoot).takeIf { it.length() <= LIMIT } }
+                catch (_: Exception) { null }
+            }
+            .sortedWith(compareByDescending<File> { it.lastModified() }.thenBy { it.name })
+            .take(200).toList()
+    }
+
     fun load(source: File, privateRoot: File): ObservableControlLayout {
         val file = checked(source, privateRoot)
         val bytes = file.inputStream().use { input ->
