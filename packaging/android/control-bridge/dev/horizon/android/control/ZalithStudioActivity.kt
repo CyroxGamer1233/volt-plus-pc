@@ -36,7 +36,7 @@ class ZalithStudioActivity : ComponentActivity() {
                 ZalithStudioEditor(
                     layout = model,
                     onCancel = { if (!saving) finish() },
-                    onSave = {
+                    onSave = { packed ->
                         if (!saving) {
                             // pack() was evaluated on the UI thread by the editor;
                             // serialization and file I/O are serialized below.
@@ -44,7 +44,7 @@ class ZalithStudioActivity : ComponentActivity() {
                             lifecycleScope.launch {
                                 try {
                                     val saved = withContext(Dispatchers.IO) {
-                                        ZalithStudioFiles.saveCopy(source!!, filesDir, model)
+                                        ZalithStudioFiles.saveCopy(source!!, filesDir, packed)
                                     }
                                     setResult(Activity.RESULT_OK, Intent().putExtra("layout_path", saved.path))
                                     Toast.makeText(this@ZalithStudioActivity, "Saved a new layout copy", Toast.LENGTH_SHORT).show()

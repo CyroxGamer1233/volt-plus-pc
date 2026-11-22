@@ -18,12 +18,12 @@ class ZalithStudioFilesTest {
             val layer = model.layers.value.first()
             val added = ZalithStudioActions.addButton(layer)
             added.text.default = "My button"
-            val saved = ZalithStudioFiles.saveCopy(original, root, model)
+            val saved = ZalithStudioFiles.saveCopy(original, root, model.pack())
             assertNotEquals(original, saved)
             assertArrayEquals(bytes, original.readBytes())
             val reloaded = ZalithStudioFiles.load(saved, root)
             assertEquals("My button", reloaded.layers.value.first().normalButtons.value.last().text.default)
-            assertEquals(saved, ZalithStudioFiles.saveCopy(original, root, model))
+            assertEquals(saved, ZalithStudioFiles.saveCopy(original, root, model.pack()))
             assertTrue(dir.listFiles()!!.none { it.name.endsWith(".tmp") })
         } finally { root.deleteRecursively() }
     }

@@ -1,9 +1,11 @@
 package dev.horizon.android.control
 
+import com.movtery.layer_controller.layout.ControlLayout
 import com.movtery.layer_controller.layout.loadLayoutFromString
 import com.movtery.layer_controller.observable.ObservableControlLayout
 import com.movtery.layer_controller.utils.layoutJson
 import kotlinx.serialization.encodeToString
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -26,14 +28,24 @@ object ZalithStudioFiles {
 
     fun load(source: File, privateRoot: File): ObservableControlLayout {
         val file = checked(source, privateRoot)
-        val bytes = file.inputStream().use { it.readNBytes(LIMIT + 1) }
+        val bytes = file.inputStream().use { input ->
+            val out = ByteArrayOutputStream()
+            val buffer = ByteArray(8192)
+            while (out.size() <= LIMIT) {
+                val count = input.read(buffer, 0, minOf(buffer.size, LIMIT + 1 - out.size()))
+                if (count < 0) break
+                if (count == 0) continue
+                out.write(buffer, 0, count)
+            }
+            out.toByteArray()
+        }
         require(bytes.size <= LIMIT) { "Control layout exceeds 2 MiB" }
         return ObservableControlLayout(loadLayoutFromString(bytes.toString(Charsets.UTF_8)))
     }
 
-    fun saveCopy(source: File, privateRoot: File, layout: ObservableControlLayout): File {
+    fun saveCopy(source: File, privateRoot: File, layout: ControlLayout): File {
         val original = checked(source, privateRoot)
-        val bytes = layoutJson.encodeToString(layout.pack()).toByteArray(Charsets.UTF_8)
+        val bytes = layoutJson.encodeToString(layout).toByteArray(Charsets.UTF_8)
         require(bytes.size <= LIMIT) { "Edited control layout exceeds 2 MiB" }
         val digest = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it.toInt() and 0xff) }
         val target = File(original.parentFile, "$digest.json")
