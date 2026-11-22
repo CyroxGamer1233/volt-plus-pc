@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="packaging/android/res/drawable-nodpi/launcher_icon.png" width="160" height="160" alt="Volt Plus logo" />
+  <img src="docs/media/volt-plus-logo.svg" width="150" height="150" alt="Volt Plus logo" />
 </p>
 
 <h1 align="center">Volt Plus</h1>
@@ -118,6 +118,7 @@ Contributions, bug reports and optimisations are welcome.
 ## License & legal
 
 - Code is licensed under the **[MIT License](LICENSE)**.
+- Volt Plus is built on the Horizon Rust engine, which remains the work of the Horizon project; this repository adds the Android launcher and mobile-facing work.
 - Minecraft is a trademark of Mojang Synergies AB. This project is not affiliated with, endorsed by or associated with Mojang or Microsoft.
 - No proprietary game assets, jars or binary resources are stored in this repository.
 
