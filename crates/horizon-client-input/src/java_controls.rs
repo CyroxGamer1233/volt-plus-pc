@@ -160,6 +160,22 @@ pub fn pojav_code(code: i32) -> Option<ControlEvent> {
         _ => ControlEvent::Token(glfw_key(code)?),
     })
 }
+/// Apply an upstream Pojav input edge to a queue. Pojav's wheel buttons
+/// fire on release, rather than on press; encode each wheel tick as a complete
+/// pair so repeated taps remain balanced. UI-owned actions return false.
+pub fn enqueue_pojav(queue: &mut InputQueue, code: i32, down: bool) -> bool {
+    let Some(ControlEvent::Token(token)) = pojav_code(code) else { return false; };
+    if matches!(code, -7 | -8) {
+        if !down {
+            queue.send(token, true);
+            queue.send(token, false);
+        }
+    } else {
+        queue.send(token, down);
+    }
+    true
+}
+
 /// Layer operations and text keep their original payload with the caller.
 /// Unknown launcher-specific actions must be surfaced, never dropped silently.
 pub fn zalith_event(kind: &str, key: &str) -> Option<ControlEvent> {
@@ -279,6 +295,9 @@ fn shared_queue() -> &'static std::sync::Mutex<InputQueue> {
 pub fn submit_token(token: &'static str, down: bool) {
     shared_queue().lock().unwrap_or_else(|e| e.into_inner()).send(token, down);
 }
+pub fn submit_pojav(code: i32, down: bool) -> bool {
+    enqueue_pojav(&mut shared_queue().lock().unwrap_or_else(|e| e.into_inner()), code, down)
+}
 pub fn drain_tokens() -> Vec<(&'static str, bool)> {
     shared_queue().lock().unwrap_or_else(|e| e.into_inner()).drain()
 }
@@ -308,6 +327,18 @@ mod tests {
         assert_eq!(zalith_event("launcher_event", "launcher.event.scroll_up"), Some(ControlEvent::ScrollUpHeld));
         assert_eq!(zalith_event("launcher_event", "launcher.event.scroll_up.single"), Some(ControlEvent::Token("mouse.scroll.up")));
         assert_eq!(zalith_event("launcher_event", "unimplemented"), None);
+    }
+    #[test]
+    fn pojav_wheel_actions_follow_upstream_release_semantics() {
+        let mut q = InputQueue::default();
+        assert!(enqueue_pojav(&mut q, -7, true));
+        assert!(q.drain().is_empty());
+        assert!(enqueue_pojav(&mut q, -7, false));
+        assert_eq!(q.drain(), vec![("mouse.scroll.up", true), ("mouse.scroll.up", false)]);
+        assert!(enqueue_pojav(&mut q, -8, false));
+        assert_eq!(q.drain(), vec![("mouse.scroll.down", true), ("mouse.scroll.down", false)]);
+        assert!(!enqueue_pojav(&mut q, -1, true));
+        assert!(!enqueue_pojav(&mut q, 0, true));
     }
     #[test]
     fn queue_balances_shared_keys_and_releases_after_focus_loss() {

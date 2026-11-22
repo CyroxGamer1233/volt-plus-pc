@@ -20,11 +20,12 @@ pub extern "system" fn control_input(
     let result = (|| -> jni::errors::Result<_> {
         let kind: String = env.get_string(&kind)?.into();
         let key: String = env.get_string(&key)?.into();
-        let event = if kind == "pojav" {
-            key.parse().ok().and_then(java_controls::pojav_code)
-        } else {
-            java_controls::zalith_event(&kind, &key)
-        };
+        if kind == "pojav" {
+            let supported = key.parse().ok()
+                .is_some_and(|code| java_controls::submit_pojav(code, down != JNI_FALSE));
+            return Ok(if supported { JNI_TRUE } else { JNI_FALSE });
+        }
+        let event = java_controls::zalith_event(&kind, &key);
         if let Some(ControlEvent::Token(token)) = event {
             java_controls::submit_token(token, down != JNI_FALSE);
             Ok(JNI_TRUE)
