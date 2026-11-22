@@ -341,9 +341,21 @@ fn validate_manifest(bytes: &[u8], checksum: &str, version: &str, pins: &Value) 
 }
 
 pub fn install_with_progress(home: &Path, progress: impl Fn(InstallProgress) + Sync) -> Result<()> {
+    install_controlled(home, |p| { progress(p); true })
+}
+
+/// Return false to request cancellation; completed cache files are retained for retry.
+/// The callback may be invoked concurrently by download workers.
+pub fn install_controlled(home: &Path, progress: impl Fn(InstallProgress) -> bool + Sync) -> Result<()> {
     let _guard = INSTALLATION.lock().unwrap_or_else(|e| e.into_inner());
-    let report = |stage, done, total| progress(InstallProgress { stage, done, total });
-    report(InstallStage::Metadata, 0, 0);
+    let cancelled = std::sync::atomic::AtomicBool::new(false);
+    let report = |stage, done, total| {
+        if cancelled.load(Ordering::Relaxed) || !progress(InstallProgress { stage, done, total }) {
+            cancelled.store(true, Ordering::Relaxed);
+            Err::<(), Box<dyn std::error::Error>>("Game preparation cancelled".into())
+        } else { Ok(()) }
+    };
+    report(InstallStage::Metadata, 0, 0)?;
     let version = horizon_core::VANILLA_VERSION;
     let cache = download_cache(home);
     let legacy = home.join(".local/downloads").join(version);
@@ -408,7 +420,7 @@ pub fn install_with_progress(home: &Path, progress: impl Fn(InstallProgress) + S
         files.len(),
         total / 1048576
     );
-    report(InstallStage::Download, 0, total);
+    report(InstallStage::Download, 0, total)?;
     let next = AtomicUsize::new(0);
     let done = AtomicU64::new(0);
     let error = Mutex::new(None);
@@ -416,7 +428,7 @@ pub fn install_with_progress(home: &Path, progress: impl Fn(InstallProgress) + S
         for _ in 0..8 {
             scope.spawn(|| {
                 loop {
-                    if error.lock().unwrap().is_some() {
+                    if error.lock().unwrap().is_some() || cancelled.load(Ordering::Relaxed) {
                         break;
                     }
                     let i = next.fetch_add(1, Ordering::Relaxed);
@@ -425,11 +437,14 @@ pub fn install_with_progress(home: &Path, progress: impl Fn(InstallProgress) + S
                         *error.lock().unwrap() = Some(e.to_string());
                         break;
                     }
-                    report(
+                    if let Err(e) = report(
                         InstallStage::Download,
                         done.fetch_add(file.size, Ordering::Relaxed) + file.size,
                         total,
-                    );
+                    ) {
+                        *error.lock().unwrap() = Some(e.to_string());
+                        break;
+                    }
                 }
             });
         }
@@ -437,6 +452,7 @@ pub fn install_with_progress(home: &Path, progress: impl Fn(InstallProgress) + S
     if let Some(error) = error.into_inner().unwrap() {
         return Err(error.into());
     }
+    report(InstallStage::Download, total, total)?;
     let versions = home.join(".local/horizon-client");
     fs::create_dir_all(&versions)?;
     let stage = versions.join("official.partial");
@@ -445,9 +461,10 @@ pub fn install_with_progress(home: &Path, progress: impl Fn(InstallProgress) + S
     }
     fs::create_dir(&stage)?;
     let result = (|| -> Result<()> {
-        report(InstallStage::Extract, 0, 0);
+        report(InstallStage::Extract, 0, 0)?;
         let mut zip = zip::ZipArchive::new(files[0].open()?)?;
         for i in 0..zip.len() {
+            report(InstallStage::Extract, i as u64, zip.len() as u64)?;
             let mut entry = zip.by_index(i)?;
             let name = entry.name()?;
             if !(name.starts_with("assets/") || name.starts_with("data/")) || entry.is_dir() {
@@ -466,6 +483,7 @@ pub fn install_with_progress(home: &Path, progress: impl Fn(InstallProgress) + S
             .map(|file| (file.path.as_path(), file))
             .collect();
         for (name, from) in assets {
+            report(InstallStage::Extract, 0, 0)?;
             let path = stage.join("assets").join(relative(name)?);
             fs::create_dir_all(path.parent().ok_or("Missing asset parent")?)?;
             let input = downloads
@@ -477,13 +495,14 @@ pub fn install_with_progress(home: &Path, progress: impl Fn(InstallProgress) + S
                 .map_err(|error| format!("Could not prepare Minecraft asset {name}: {error}"))?;
         }
         crate::resource_install::extract(&home.join("engine-data.zip"), &stage)?;
-        report(InstallStage::WorldData, 0, 0);
+        report(InstallStage::WorldData, 0, 0)?;
         crate::android_resources::rebuild(&stage)?;
-        report(InstallStage::Controls, 0, 0);
+        report(InstallStage::Controls, 0, 0)?;
         crate::android_resources::controls_with_progress(&stage, |done, total| {
-            report(InstallStage::Controls, done, total)
+            let _ = report(InstallStage::Controls, done, total);
         })?;
-        report(InstallStage::Finalize, 0, 0);
+        report(InstallStage::Controls, 0, 0)?;
+        report(InstallStage::Finalize, 0, 0)?;
         fs::write(stage.join("android-downloads-v2.json"), b"{\"schema\":2}")?;
         // Android can evict cache files under storage pressure. The verified
         // index was already decoded above; finalization must not reopen it.
@@ -495,6 +514,7 @@ pub fn install_with_progress(home: &Path, progress: impl Fn(InstallProgress) + S
         if cfg!(feature = "audio") {
             fs::write(stage.join("audio-complete.json"), b"{}")?;
         }
+        report(InstallStage::Finalize, 0, 0)?;
         let destination = versions.join(version);
         let backup = versions.join(format!("{version}.previous"));
         if backup.exists() && !destination.exists() {

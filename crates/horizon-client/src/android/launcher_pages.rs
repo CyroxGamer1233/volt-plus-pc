@@ -6299,8 +6299,7 @@ impl Launcher {
                 self.road_game = None;
                 self.install_cancelled.store(true, Ordering::Relaxed);
                 self.install_paused.store(false, Ordering::Relaxed);
-                self.worker = None;
-                self.catalog.status = "Game preparation cancelled.".into();
+                self.catalog.status = "Cancelling game preparation…".into();
             }
             Some(Action::PauseCatalogDownload) => {
                 self.catalog.toggle_pause();

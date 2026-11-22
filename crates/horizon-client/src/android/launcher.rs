@@ -731,11 +731,14 @@ impl Launcher {
             self.worker = Some(receiver);
             std::thread::spawn(move || {
                 let result =
-                    horizon_client::official_install::install_with_progress(&home, |update| {
+                    horizon_client::official_install::install_controlled(&home, |update| {
                         while paused.load(std::sync::atomic::Ordering::Relaxed)
                             && !cancelled.load(std::sync::atomic::Ordering::Relaxed)
                         {
                             std::thread::sleep(Duration::from_millis(50));
+                        }
+                        if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+                            return false;
                         }
                         let mut current = install
                             .lock()
@@ -747,6 +750,7 @@ impl Launcher {
                         };
                         *current =
                             horizon_client::official_install::InstallProgress { done, ..update };
+                        true
                     });
                 let _ = sender.send(result.map_err(|e| e.to_string()));
             });
@@ -946,7 +950,11 @@ impl ApplicationHandler for Launcher {
         }
         if let Some(result) = self.worker.as_ref().and_then(|w| w.try_recv().ok()) {
             self.worker = None;
-            if let Err(error) = result {
+            if self.install_cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+                self.road_game = None;
+                self.auto_launch_after_install = false;
+                self.catalog.status = "Game preparation cancelled. Completed downloads are kept.".into();
+            } else if let Err(error) = result {
                 self.road_game = None;
                 self.auto_launch_after_install = false;
                 let message = error.to_string();

@@ -1521,6 +1521,14 @@ impl Settings {
     ) -> std::result::Result<PresetMeta, String> {
         let value: serde_json::Value = serde_json::from_slice(bytes)
             .map_err(|e| format!("Invalid control JSON file: {e}"))?;
+        if value.get("mControlDataList").is_some() || value.get("layers").is_some() {
+            return Err("Pojav and Zalith control layouts are not supported by this importer yet. Your existing controls were not changed.".into());
+        }
+        let recognized = ["layouts", "custom_buttons", "control_style", "button_visibility"]
+            .iter().any(|key| value.get(*key).is_some());
+        if !recognized {
+            return Err("Unrecognized control preset format; existing controls were not changed.".into());
+        }
         let mut parsed: Self = serde_json::from_value(value.clone())
             .map_err(|e| format!("Unrecognized control preset format: {e}"))?;
         let style = Self::detect_control_style(&value, &parsed);

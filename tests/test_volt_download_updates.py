@@ -40,6 +40,24 @@ class DownloadUpdatesTests(unittest.TestCase):
         self.assertNotIn('55.3 * f64::from(overall)', pages)
         self.assertIn('Speed unavailable', pages)
 
+    def test_cancel_keeps_worker_until_cooperative_stop(self):
+        launcher = read('crates/horizon-client/src/android/launcher.rs')
+        pages = read('crates/horizon-client/src/android/launcher_pages.rs')
+        installer = read('crates/horizon-client/src/official_install.rs')
+        block = pages.split('Some(Action::CancelInstall) =>', 1)[1].split('Some(Action::PauseCatalogDownload)', 1)[0]
+        self.assertIn('self.install_cancelled.store(true', block)
+        self.assertNotIn('self.worker = None', block)
+        self.assertIn('install_controlled(&home', launcher)
+        self.assertIn('cancelled.load(Ordering::Relaxed)', installer)
+        self.assertIn('report(InstallStage::Finalize, 0, 0)?;', installer)
+
+    def test_foreign_layouts_are_rejected_without_writing_defaults(self):
+        src = read('crates/horizon-client-render/src/touch/layout.rs')
+        block = src.split('pub fn detect_and_import_preset(', 1)[1]
+        self.assertLess(block.index('value.get("mControlDataList")'), block.index('Self::ensure_system_storage'))
+        self.assertIn('value.get("layers")', block)
+        self.assertIn('existing controls were not changed', block)
+
     def test_touch_key_picker_covers_the_registered_keys_and_saves_binding(self):
         options = read('crates/horizon-client-render/src/options_ui.rs')
         self.assertIn('keybinds::available_keys()', options)
