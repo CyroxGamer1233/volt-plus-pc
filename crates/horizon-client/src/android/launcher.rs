@@ -60,6 +60,8 @@ pub(super) struct Launcher {
     wallpaper_worker: Option<mpsc::Receiver<std::result::Result<String, String>>>,
     wallpaper_status: String,
     wallpaper_has_frame: bool,
+    wallpaper_frame_size: [u32; 2],
+    wallpaper_buffer: Vec<u8>,
     wallpaper_color: Option<[u8; 3]>,
     targets: Vec<([f32; 4], pages::Action)>,
     list_targets: Vec<([f32; 4], pages::Action)>,
@@ -82,18 +84,25 @@ pub(super) struct Launcher {
 
 impl Launcher {
     fn start_wallpaper(&mut self) {
-        self.wallpaper_has_frame = false;
         if let Some(i) = self.catalog.config.wallpaper_index
             && let Some(item) = crate::wallpapers::WALLPAPERS.get(i)
             && let Some(path) = crate::wallpapers::path(&self.home, i)
         {
             if std::fs::metadata(&path).is_ok_and(|m| m.len() == item.size) {
-                if let Err(e) = crate::native_ime::wallpaper_start(&path, item.width, item.height) {
+                let viewport = self.renderer.as_ref().map(|r| [r.config.width, r.config.height])
+                    .unwrap_or([item.width, item.height]);
+                self.wallpaper_frame_size = crate::wallpapers::frame_size([item.width, item.height], viewport);
+                if let Err(e) = crate::native_ime::wallpaper_start(&path, [item.width, item.height], self.wallpaper_frame_size) {
                     self.wallpaper_status = format!("Video unavailable: {e}");
                 }
             } else {
                 self.wallpaper_status = "Download the selected video again.".into();
             }
+        }
+    }
+    fn recycle_wallpaper_buffer(&mut self, batch: &mut HudBatch) {
+        if let Some(patch) = batch.patches.iter_mut().find(|p| p.x == u32::MAX && p.y == u32::MAX) {
+            self.wallpaper_buffer = std::mem::take(&mut patch.rgba);
         }
     }
     pub(super) fn refresh_wardrobe_account(&mut self) {
@@ -269,6 +278,8 @@ impl Launcher {
             wallpaper_worker: None,
             wallpaper_status: "Select a video to download or equip it.".into(),
             wallpaper_has_frame: false,
+            wallpaper_frame_size: [0, 0],
+            wallpaper_buffer: Vec::new(),
             wallpaper_color: None,
             targets: vec![],
             list_targets: vec![],
@@ -327,13 +338,14 @@ impl Launcher {
         self.login.refresh_status();
         crate::diagnostics::heartbeat("returned_to_launcher", || serde_json::json!({}));
         self.catalog.page = Page::Play;
-        self.start_wallpaper();
         if let Ok(message) = std::fs::read_to_string(self.home.join("android-error.txt")) {
             self.error = Some(message);
         }
         if let Err(error) = self.open(events) {
             self.fail(error);
             events.exit();
+        } else {
+            self.start_wallpaper();
         }
     }
     pub(super) fn configure_screen(&self) {
@@ -748,7 +760,8 @@ impl ApplicationHandler for Launcher {
         self.drag = None;
         self.focused = false;
         crate::native_ime::wallpaper_stop();
-        self.wallpaper_has_frame = false;
+        // Keep the last texture while Android briefly loses focus (screenshots,
+        // notification shade); decoding restarts after the surface resumes.
         let _ = crate::device_runtime::gyro(false, 1.0, 0);
         if let Some(renderer) = &mut self.renderer {
             renderer.suspend_surface();
@@ -778,6 +791,14 @@ impl ApplicationHandler for Launcher {
             WindowEvent::Resized(size) => {
                 if let Some(r) = &mut self.renderer {
                     r.resize(size.width, size.height);
+                }
+                if let Some(item) = self.catalog.config.wallpaper_index.and_then(|i| crate::wallpapers::WALLPAPERS.get(i)) {
+                    let viewport = self.renderer.as_ref().map(|r| [r.config.width, r.config.height])
+                        .unwrap_or([size.width, size.height]);
+                    let target = crate::wallpapers::frame_size([item.width, item.height], viewport);
+                    if size.width > 0 && size.height > 0 && target != self.wallpaper_frame_size {
+                        self.start_wallpaper();
+                    }
                 }
                 Ok(())
             }

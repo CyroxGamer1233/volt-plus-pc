@@ -36,7 +36,8 @@ pub(super) struct Wardrobe {
     cache: cloud::Cache,
     pub view: [f32; 3],
     worker: Option<mpsc::Receiver<(String, Result<(cloud::Cache, bool), String>)>>,
-    bitmap: Vec<([f32; 4], u32)>,
+    bitmap: image::RgbaImage,
+    bitmap_revision: u64,
     head_bitmap: Vec<([f32; 4], u32)>,
     rect: [f32; 4],
     fingers: std::collections::BTreeMap<u64, [f32; 2]>,
@@ -68,7 +69,8 @@ impl Wardrobe {
             camera: Default::default(),
             cache: Default::default(),
             worker: None,
-            bitmap: vec![],
+            bitmap: image::RgbaImage::new(384, 480),
+            bitmap_revision: 0,
             head_bitmap: vec![],
             rect: [0.0; 4],
             view: [0.0; 3],
@@ -420,25 +422,10 @@ impl Wardrobe {
                 if a > 0 { self.head_bitmap.push(([start as f32, y as f32, (x - start) as f32, 1.0], rgba(r, g, b, a))); }
             }
         }
-        let image = preview::render(&skin, cape.as_ref(), model, self.camera, [160, 200]);
-        self.bitmap.clear();
-        for y in 0..image.height() {
-            let mut x = 0;
-            while x < image.width() {
-                let color = image.get_pixel(x, y).0;
-                let start = x;
-                x += 1;
-                while x < image.width() && image.get_pixel(x, y).0 == color {
-                    x += 1;
-                }
-                if color[3] > 0 {
-                    self.bitmap.push((
-                        [start as f32, y as f32, (x - start) as f32, 1.0],
-                        rgba(color[0], color[1], color[2], color[3]),
-                    ));
-                }
-            }
-        }
+        // Rasterize at more than twice the former dimensions. The skin's own
+        // Minecraft texels remain sharp; model edges no longer use large quads.
+        self.bitmap = preview::render(&skin, cape.as_ref(), model, self.camera, [384, 480]);
+        self.bitmap_revision = self.bitmap_revision.wrapping_add(1);
     }
     pub fn is_animating(&self) -> bool {
         let now = std::time::Instant::now();
@@ -486,8 +473,16 @@ impl Wardrobe {
         let oy = y + (h - 200.0 * scale) * 0.5;
         ui.rounded(x + w * 0.23, y + h * 0.91, w * 0.54, 6.0, 3.0,
             horizon_client::hud::rgba(8, 10, 20, 100));
-        for ([bx, by, bw, bh], col) in &self.bitmap {
-            ui.rounded(ox + bx * scale, oy + by * scale, bw * scale, bh * scale, 0.0, *col);
+        if !ui.scene_avatar(self.bitmap.width(), self.bitmap.height(), self.bitmap.as_raw(), self.bitmap_revision,
+            ox, oy, 160.0 * scale, 200.0 * scale) {
+            // Small boot atlases have no room for the reserved slot.
+            for y in (0..self.bitmap.height()).step_by(3) {
+                for x in (0..self.bitmap.width()).step_by(3) {
+                    let [r, g, b, a] = self.bitmap.get_pixel(x, y).0;
+                    if a > 0 { ui.rounded(ox + x as f32 / 2.4 * scale, oy + y as f32 / 2.4 * scale,
+                        1.25 * scale, 1.25 * scale, 0.0, rgba(r, g, b, a)); }
+                }
+            }
         }
     }
 

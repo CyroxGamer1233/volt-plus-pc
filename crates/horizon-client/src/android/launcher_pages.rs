@@ -1271,49 +1271,8 @@ impl Launcher {
         result
     }
 
-    /// Draws one launcher frame with the renderer lent out (see `draw_pages`).
-    fn draw_pages_with(&mut self, r: &mut Renderer, gui: &game::UiResources) -> Result<()> {
-        if r.suspended {
-            return Ok(());
-        }
-        custom_background_poll(&self.home);
-        self.targets.clear();
-        SLIDER_TRACK_TARGETS.with(|t| t.borrow_mut().clear());
-        self.list_targets.clear();
-        self.list_view = None;
-
-        // Fullscreen MCPE + GoyControl Editor with Draggable Floating Menu Pod
-        if let Some(tc) = &mut self.control_editor {
-            let game_home = self.catalog.config.game_home(&self.home);
-            let prev_cwd = std::env::current_dir().ok();
-            let _ = std::env::set_current_dir(&game_home);
-            let mut b = HudBatch::new([r.config.width, r.config.height]);
-            tc.viewport(r.config.width, r.config.height);
-            let profile_name = tc.settings.active_profile.clone();
-            horizon_client::touch_ui::draw_hud_editor(tc, &mut b, &gui.atlas, &profile_name, None);
-            if let Some(prev) = prev_cwd {
-                let _ = std::env::set_current_dir(prev);
-            }
-            if !r.render(&game::loading_frame(&b))? && !b.patches.is_empty() {
-                horizon_client::ui_theme::reset_atlas();
-            }
-            return Ok(());
-        }
-
-        let mut b = HudBatch::new([r.config.width, r.config.height]);
-        let mut ui = Ui::mobile(&gui.atlas, &mut b, (0.0, 0.0));
-        // Keep ui.w and ui.h synchronized with Launcher::ui_density(). When the soft keyboard is
-        // active, compute ime_top_dp and bias scroll offsets / modal Y positions instead of shrinking ui.h.
-        let ime_top_dp = if self.catalog.editing.is_some() {
-            crate::native_ime::viewport_bottom()
-                .map(|bottom_px| (bottom_px as f32 / ui.density).clamp(110.0, ui.h))
-        } else {
-            None
-        };
-        let (w, full_h) = (ui.w, ui.h);
-        // Leave room for the navigation dock in all page layouts and scroll calculations.
-        let h = (full_h - 54.0).max(210.0);
-        ui.h = h;
+    /// The launcher and control editor share the selected live background.
+    fn draw_scene_background(&mut self, ui: &mut Ui, w: f32, full_h: f32) {
         let sensitivity = self.catalog.config.scene_gyro_sensitivity.min(300) as f32 / 100.0;
         let motion_ok = sensitivity > 0.0 && !horizon_client::ui_theme::motion::reduced_motion()
             && self.focused && self.control_editor.is_none();
@@ -1337,11 +1296,13 @@ impl Launcher {
             let y = -dy + self.anim.scene_offset[1] * dy * 0.95;
             ui.scene_image(scene.width(), scene.height(), scene.as_raw(), x, y, sw, sh);
         }
-        if self.focused && let Some(index) = self.catalog.config.wallpaper_index
+        if let Some(index) = self.catalog.config.wallpaper_index
             && let Some(item) = crate::wallpapers::WALLPAPERS.get(index)
         {
-            let expected = item.width as usize * item.height as usize * 4;
-            let frame = crate::native_ime::wallpaper_frame(expected);
+            let [frame_w, frame_h] = self.wallpaper_frame_size;
+            let expected = frame_w as usize * frame_h as usize * 4;
+            // Keep the last uploaded frame visible across transient focus changes.
+            let frame = if self.focused && expected > 0 { crate::native_ime::wallpaper_frame(expected, &mut self.wallpaper_buffer) } else { None };
             if let Some(bytes) = frame.as_ref() {
                 self.wallpaper_has_frame = true;
                 if let Some(sample) = crate::wallpapers::sample_color(bytes) {
@@ -1359,11 +1320,67 @@ impl Launcher {
                 let dy = (sh - full_h) * 0.5;
                 let x = -dx + self.anim.scene_offset[0] * dx * 0.95;
                 let y = -dy + self.anim.scene_offset[1] * dy * 0.95;
-                ui.video_scene(item.width, item.height, frame, x, y, sw, sh);
+                ui.video_scene(frame_w, frame_h, frame, x, y, sw, sh);
             }
         }
         // A restrained veil keeps the landscape visible and the white controls readable.
         ui.fill(0.0, 0.0, w, full_h, color::hex(0x10111d, 42));
+
+    }
+
+    /// Draws one launcher frame with the renderer lent out (see `draw_pages`).
+    fn draw_pages_with(&mut self, r: &mut Renderer, gui: &game::UiResources) -> Result<()> {
+        if r.suspended {
+            return Ok(());
+        }
+        custom_background_poll(&self.home);
+        self.targets.clear();
+        SLIDER_TRACK_TARGETS.with(|t| t.borrow_mut().clear());
+        self.list_targets.clear();
+        self.list_view = None;
+
+        // Keep the same wallpaper behind the full-screen touch layout editor.
+        if self.control_editor.is_some() {
+            let game_home = self.catalog.config.game_home(&self.home);
+            let prev_cwd = std::env::current_dir().ok();
+            let _ = std::env::set_current_dir(&game_home);
+            let mut b = HudBatch::new([r.config.width, r.config.height]);
+            {
+                let mut ui = Ui::mobile(&gui.atlas, &mut b, (0.0, 0.0));
+                let (w, h) = (ui.w, ui.h);
+                self.draw_scene_background(&mut ui, w, h);
+                ui.finish();
+            }
+            let tc = self.control_editor.as_mut().expect("editor is open");
+            tc.viewport(r.config.width, r.config.height);
+            let profile_name = tc.settings.active_profile.clone();
+            horizon_client::touch_ui::draw_hud_editor(tc, &mut b, &gui.atlas, &profile_name, None);
+            if let Some(prev) = prev_cwd {
+                let _ = std::env::set_current_dir(prev);
+            }
+            let rendered = r.render(&game::loading_frame(&b));
+            self.recycle_wallpaper_buffer(&mut b);
+            if !rendered? && !b.patches.is_empty() {
+                horizon_client::ui_theme::reset_atlas();
+            }
+            return Ok(());
+        }
+
+        let mut b = HudBatch::new([r.config.width, r.config.height]);
+        let mut ui = Ui::mobile(&gui.atlas, &mut b, (0.0, 0.0));
+        // Keep ui.w and ui.h synchronized with Launcher::ui_density(). When the soft keyboard is
+        // active, compute ime_top_dp and bias scroll offsets / modal Y positions instead of shrinking ui.h.
+        let ime_top_dp = if self.catalog.editing.is_some() {
+            crate::native_ime::viewport_bottom()
+                .map(|bottom_px| (bottom_px as f32 / ui.density).clamp(110.0, ui.h))
+        } else {
+            None
+        };
+        let (w, full_h) = (ui.w, ui.h);
+        // Leave room for the navigation dock in all page layouts and scroll calculations.
+        let h = (full_h - 54.0).max(210.0);
+        ui.h = h;
+        self.draw_scene_background(&mut ui, w, full_h);
 
         let account_name = self.login.profile.clone().unwrap_or_else(|| self.catalog.config.name.clone());
         // Brand and account remain on the scene as the other tabs slide over it.
@@ -1391,7 +1408,7 @@ impl Launcher {
             self.anim.scene_shift += (target_shift - self.anim.scene_shift) * (dt * 10.0).min(1.0);
         }
         let t = self.anim.scene_shift;
-        let from = [w * 0.5 - 112.0, 55.0, 224.0, (h - 120.0).max(100.0)];
+        let from = [w * 0.76 - 112.0, 55.0, 224.0, (h - 120.0).max(100.0)];
         let to = [12.0, 98.0, (w * 0.23 - 18.0).clamp(100.0, 210.0), (h - 114.0).max(90.0)];
         let scene_rect = std::array::from_fn(|i| from[i] + (to[i] - from[i]) * t);
         self.wardrobe.draw_scene(&mut ui, scene_rect);
@@ -2417,7 +2434,9 @@ impl Launcher {
         }
         ui.finish();
 
-        if !r.render(&game::loading_frame(&b))? && !b.patches.is_empty() {
+        let rendered = r.render(&game::loading_frame(&b));
+        self.recycle_wallpaper_buffer(&mut b);
+        if !rendered? && !b.patches.is_empty() {
             // A suspended/lost surface skips the frame, including its glyph
             // uploads. Rebuild them next time instead of caching invisible text.
             horizon_client::ui_theme::reset_atlas();
@@ -5922,7 +5941,7 @@ impl Launcher {
                             Action::SelectControlMode(horizon_client::touch::ControlStyle::Mcpe),
                         ),
                         (
-                            "GoyControl",
+                            "Java like controlls",
                             "Custom multi-bind HUD, macros & pass-through",
                             "PRO OVERLAY",
                             is_goy,
@@ -7351,6 +7370,7 @@ impl Launcher {
                     && std::fs::metadata(path).is_ok_and(|m| m.len() == item.size)
                 {
                     self.catalog.config.wallpaper_index = Some(i);
+                    self.wallpaper_has_frame = false;
                     self.catalog.config.save(&self.home)?;
                     self.wallpaper_color = None;
                     self.wallpaper_status = format!("Equipped {}", item.name);

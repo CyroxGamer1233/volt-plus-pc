@@ -69,6 +69,16 @@ pub fn download(home: &Path, index: usize) -> Result<String, String> {
     result.map(|()| format!("{} downloaded in original quality", item.name))
 }
 
+/// Match the display's physical resolution including parallax overscan, never
+/// resample above the original. The downloaded MP4 is never modified.
+pub fn frame_size(source: [u32; 2], viewport: [u32; 2]) -> [u32; 2] {
+    if source.contains(&0) || viewport.contains(&0) { return source; }
+    let scale = ((viewport[0] as f64 / source[0] as f64)
+        .max(viewport[1] as f64 / source[1] as f64) * 1.30).clamp(0.01, 1.0);
+    [((source[0] as f64 * scale).ceil() as u32).min(source[0]),
+     ((source[1] as f64 * scale).ceil() as u32).min(source[1])]
+}
+
 /// Sample a bounded number of decoded pixels for a scene-matching glass tint.
 pub fn sample_color(bytes: &[u8]) -> Option<[u8; 3]> {
     if bytes.len() < 4 || bytes.len() % 4 != 0 { return None; }
@@ -93,6 +103,16 @@ mod tests {
             assert!(matches!((item.width, item.height), (3840, 2160) | (1920, 1080)));
             assert_eq!(item.sha256.len(), 64);
         }
+    }
+
+    #[test]
+    fn frame_size_preserves_display_detail_and_bounds() {
+        let source = [3840, 2160];
+        let small = frame_size(source, [1560, 702]);
+        assert!(small[0] >= 1560 && small[1] >= 702);
+        assert!(small[0] < source[0] && small[1] < source[1]);
+        assert_eq!(frame_size(source, [3840, 2160]), source);
+        assert_eq!(frame_size(source, [0, 0]), source);
     }
 
     #[test]

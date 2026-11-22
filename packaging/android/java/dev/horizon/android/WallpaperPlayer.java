@@ -32,6 +32,8 @@ final class WallpaperPlayer {
     private Surface surface;
     private MediaPlayer player;
     private int texture, program, width, height;
+    private long lastFrameNanos;
+    private static final long FRAME_INTERVAL_NANOS = 60_000_000L; // roughly 15 uploads/sec from 30 fps sources
     private final float[] transform = new float[16];
     private final FloatBuffer quad = floats(new float[] {
             -1,-1, 0,1,  1,-1, 1,1,  -1,1, 0,0,  1,1, 1,0 });
@@ -42,7 +44,7 @@ final class WallpaperPlayer {
         b.put(data).position(0); return b;
     }
 
-    void start(String path, int w, int h) {
+    void start(String path, int sourceWidth, int sourceHeight, int w, int h) {
         final int id;
         synchronized (lock) { id = ++generation; ready = false; status = "Preparing wallpaper..."; }
         handler.post(() -> {
@@ -50,10 +52,11 @@ final class WallpaperPlayer {
             synchronized (lock) { if (id != generation) return; }
             try {
                 if (w <= 0 || h <= 0 || (long) w * h * 4 > 40_000_000L) throw new IllegalArgumentException("Unsupported video size");
-                width = w; height = h;
+                width = w; height = h; lastFrameNanos = 0;
                 initGl();
                 surfaceTexture = new SurfaceTexture(texture);
-                surfaceTexture.setDefaultBufferSize(w, h);
+                // Decode the untouched source; GL samples to the physical display + overscan.
+                surfaceTexture.setDefaultBufferSize(sourceWidth, sourceHeight);
                 surface = new Surface(surfaceTexture);
                 surfaceTexture.setOnFrameAvailableListener(st -> frame(id), handler);
                 MediaPlayer m = new MediaPlayer();
@@ -141,6 +144,9 @@ final class WallpaperPlayer {
         try {
             surfaceTexture.updateTexImage();
             synchronized (lock) { if (ready || reading || id != generation) return; }
+            long now = android.os.SystemClock.elapsedRealtimeNanos();
+            if (lastFrameNanos != 0 && now - lastFrameNanos < FRAME_INTERVAL_NANOS) return;
+            lastFrameNanos = now;
             surfaceTexture.getTransformMatrix(transform);
             GLES20.glViewport(0, 0, width, height);
             GLES20.glUseProgram(program);

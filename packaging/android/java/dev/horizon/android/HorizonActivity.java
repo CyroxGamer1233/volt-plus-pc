@@ -25,7 +25,9 @@ public final class HorizonActivity extends android.app.NativeActivity {
 
     // These methods may be called from the Rust render thread. All decoder/GL
     // operations are posted to WallpaperPlayer's dedicated looper.
-    public void startWallpaper(String path, int width, int height) { WallpaperPlayer.get().start(path, width, height); }
+    public void startWallpaper(String path, int sourceWidth, int sourceHeight, int width, int height) {
+        WallpaperPlayer.get().start(path, sourceWidth, sourceHeight, width, height);
+    }
     public void stopWallpaper() { WallpaperPlayer.get().stop(); }
     public java.nio.ByteBuffer acquireWallpaperFrame() { return WallpaperPlayer.get().acquire(); }
     public void releaseWallpaperFrame() { WallpaperPlayer.get().releaseFrame(); }

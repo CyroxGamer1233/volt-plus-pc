@@ -4636,13 +4636,14 @@ pub fn draw_hud_editor(
     let border_c = theme.border;
     let accent = theme.accent;
     let accent_soft = theme.surface_selected;
-    let accent_fg = theme.accent_text;
+    // Filled accent buttons need on-accent contrast, not accent-colored text.
+    let accent_fg = theme.on_accent;
     let text_c = theme.text_primary;
     let muted_c = theme.text_muted;
     let danger_c = theme.danger;
 
     // 1. Dark Blueprint Canvas & Alignment Grid
-    ui.fill(0.0, 0.0, w, h, rgba(9, 10, 16, 228));
+    ui.fill(0.0, 0.0, w, h, rgba(9, 10, 16, 170));
     let step = if tc.settings.snap_to_grid {
         0.025
     } else {
@@ -6672,7 +6673,7 @@ pub fn draw_hud_editor(
             if is_def {
                 "Protected"
             } else {
-                "Replace & Save"
+                "Save"
             },
         );
 
@@ -6733,7 +6734,7 @@ pub fn draw_hud_editor(
             10.5,
             create_btn_r,
             accent_fg,
-            "Create New Preset & Save",
+            "Save and Exit",
         );
 
         ui.finish();

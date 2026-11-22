@@ -261,7 +261,7 @@ class LauncherOverhaulTests(unittest.TestCase):
         self.assertIn("Action::ResetTheme", launcher_pages)
 
         # Ensure draw_hud_editor in launcher_pages.rs renders directly without page/modal animation wrapper
-        editor_branch = launcher_pages.split("if let Some(tc) = &mut self.control_editor {")[
+        editor_branch = launcher_pages.split("if self.control_editor.is_some() {")[
             1
         ].split("return Ok(());")[0]
         self.assertIn("draw_hud_editor", editor_branch)
