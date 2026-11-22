@@ -38,6 +38,8 @@ mod diagnostics;
 mod display;
 #[path = "android/document_bridge.rs"]
 mod document_bridge;
+#[path = "android/java_control_bridge.rs"]
+mod java_control_bridge;
 #[path = "android/document_provider.rs"]
 mod document_provider;
 #[path = "android/document_store.rs"]

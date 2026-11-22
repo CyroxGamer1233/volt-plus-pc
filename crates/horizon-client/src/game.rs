@@ -18353,6 +18353,13 @@ impl Game<'_> {
         #[cfg(target_os = "android")]
         self.android_poll_keyboard();
         #[cfg(target_os = "android")]
+        {
+            if !self.focused { horizon_client::java_controls::release_tokens(); }
+            for (token, down) in horizon_client::java_controls::drain_tokens() {
+                self.android_custom_token_edge(token, down);
+            }
+        }
+        #[cfg(target_os = "android")]
         if let Some(renderer) = &mut self.renderer {
             renderer.set_detailed_gpu_timing(
                 crate::performance::active() || crate::device_runtime::preferences().gpu_profile,
@@ -20703,6 +20710,10 @@ impl Loading {
         }
         #[cfg(target_os = "android")]
         self.menu_android_keyboard();
+        #[cfg(target_os = "android")]
+        for (token, down) in horizon_client::java_controls::drain_tokens() {
+            self.startup_dispatch_custom_token(event_loop, token, down);
+        }
         #[cfg(target_os = "android")]
         if let Err(error) = self.menu_gamepad_frame(event_loop) {
             self.error = Some(error);

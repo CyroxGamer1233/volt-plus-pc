@@ -1,0 +1,43 @@
+//! JNI input edge handoff for Android control overlays.
+//! All game mutation happens later on the winit thread.
+use jni::{
+    JNIEnv,
+    objects::{JObject, JString},
+    sys::{JNI_FALSE, JNI_TRUE, jboolean},
+};
+use horizon_client::java_controls::{self, ControlEvent};
+
+/// The string protocol keeps launcher actions distinct from keyboard keys.
+/// Return false for actions that must be handled by the Android overlay itself.
+pub extern "system" fn control_input(
+    mut env: JNIEnv<'_>,
+    _activity: JObject<'_>,
+    kind: JString<'_>,
+    key: JString<'_>,
+    down: jboolean,
+) -> jboolean {
+    if kind.is_null() || key.is_null() { return JNI_FALSE; }
+    let result = (|| -> jni::errors::Result<_> {
+        let kind: String = env.get_string(&kind)?.into();
+        let key: String = env.get_string(&key)?.into();
+        let event = if kind == "pojav" {
+            key.parse().ok().and_then(java_controls::pojav_code)
+        } else {
+            java_controls::zalith_event(&kind, &key)
+        };
+        if let Some(ControlEvent::Token(token)) = event {
+            java_controls::submit_token(token, down != JNI_FALSE);
+            Ok(JNI_TRUE)
+        } else {
+            Ok(JNI_FALSE)
+        }
+    })();
+    match result {
+        Ok(value) => value,
+        Err(_) => { let _ = env.exception_clear(); JNI_FALSE }
+    }
+}
+
+pub extern "system" fn control_reset(_env: JNIEnv<'_>, _activity: JObject<'_>) {
+    java_controls::release_tokens();
+}

@@ -25,6 +25,16 @@ jobs:
         run: |
           set -o pipefail
           gradle :layer:assembleDebug :layer:testDebugUnitTest --stacktrace 2>&1 | tee "$RUNNER_TEMP/controls-build.log"
+          python3 - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          results = list(Path('layer/build/test-results/testDebugUnitTest').glob('TEST-*.xml'))
+          suites = [ET.parse(p).getroot() for p in results]
+          tests = sum(int(s.get('tests', '0')) for s in suites)
+          if tests < 2:
+              raise SystemExit(f'Original layout fixture tests did not run: {tests}')
+          print(f'::notice::Original Zalith fixture tests executed: {tests}')
+          PY
       - name: Summarize failures
         if: failure()
         run: |

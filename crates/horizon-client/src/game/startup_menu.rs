@@ -1039,7 +1039,7 @@ impl Loading {
     }
 
     #[cfg(target_os = "android")]
-    fn startup_dispatch_custom_token(
+    pub(super) fn startup_dispatch_custom_token(
         &mut self,
         event_loop: &dyn EventLoopCtl,
         token: &str,

@@ -13,6 +13,9 @@ public final class HorizonActivity extends android.app.NativeActivity {
     private static volatile String sCopyCurrentFile = "";
 
     private native void nativeDocumentResult(int request, int result, String uri);
+    // Native methods are registered against the actual loaded game library.
+    public native boolean nativeControlInput(String kind, String key, boolean pressed);
+    public native void nativeControlReset();
 
     public static void cancelFolderCopy() {
         sCancelFolderCopy = true;

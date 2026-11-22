@@ -15,11 +15,23 @@ pub fn register(
     let class = env.get_object_class(activity)?;
     env.register_native_methods(
         class,
-        &[NativeMethod {
-            name: "nativeDocumentResult".into(),
-            sig: "(IILjava/lang/String;)V".into(),
-            fn_ptr: callback as *mut std::ffi::c_void,
-        }],
+        &[
+            NativeMethod {
+                name: "nativeDocumentResult".into(),
+                sig: "(IILjava/lang/String;)V".into(),
+                fn_ptr: callback as *mut std::ffi::c_void,
+            },
+            NativeMethod {
+                name: "nativeControlInput".into(),
+                sig: "(Ljava/lang/String;Ljava/lang/String;Z)Z".into(),
+                fn_ptr: crate::java_control_bridge::control_input as *mut std::ffi::c_void,
+            },
+            NativeMethod {
+                name: "nativeControlReset".into(),
+                sig: "()V".into(),
+                fn_ptr: crate::java_control_bridge::control_reset as *mut std::ffi::c_void,
+            },
+        ],
     )
 }
 

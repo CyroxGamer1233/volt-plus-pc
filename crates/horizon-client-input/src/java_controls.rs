@@ -221,6 +221,68 @@ impl HoldTracker {
     }
 }
 
+/// The Android overlay and game loop run on different threads. Keep key edges
+/// bounded and balance overlapping controls before they reach the game.
+#[derive(Default)]
+pub struct InputQueue {
+    counts: BTreeMap<&'static str, usize>,
+    delivered: BTreeSet<&'static str>,
+    pending: std::collections::VecDeque<(&'static str, bool)>,
+}
+impl InputQueue {
+    const MAX_PENDING: usize = 1024;
+    const MAX_OWNERS_PER_KEY: usize = 128;
+    pub fn send(&mut self, token: &'static str, down: bool) {
+        if self.pending.len() >= Self::MAX_PENDING {
+            // Do not leave a previously delivered input held after overload.
+            self.pending.clear();
+            self.counts.clear();
+            self.pending.extend(self.delivered.iter().copied().map(|key| (key, false)));
+            return;
+        }
+        if down {
+            let count = self.counts.entry(token).or_default();
+            if *count >= Self::MAX_OWNERS_PER_KEY { return; }
+            *count += 1;
+            if *count == 1 { self.pending.push_back((token, true)); }
+        } else if let Some(count) = self.counts.get_mut(token) {
+            *count -= 1;
+            if *count == 0 {
+                self.counts.remove(token);
+                self.pending.push_back((token, false));
+            }
+        }
+    }
+    pub fn release_all(&mut self) {
+        for key in std::mem::take(&mut self.counts).into_keys() {
+            self.pending.push_back((key, false));
+        }
+    }
+    pub fn drain(&mut self) -> Vec<(&'static str, bool)> {
+        let edges: Vec<_> = self.pending.drain(..).collect();
+        for &(token, down) in &edges {
+            if down { self.delivered.insert(token); } else { self.delivered.remove(token); }
+        }
+        edges
+    }
+}
+
+fn shared_queue() -> &'static std::sync::Mutex<InputQueue> {
+    static QUEUE: std::sync::OnceLock<std::sync::Mutex<InputQueue>> = std::sync::OnceLock::new();
+    QUEUE.get_or_init(Default::default)
+}
+/// Accepts a recognized Pojav/GLFW or Zalith input token. Launcher UI and
+/// layer actions remain the responsibility of their respective Android host.
+pub fn submit_token(token: &'static str, down: bool) {
+    shared_queue().lock().unwrap_or_else(|e| e.into_inner()).send(token, down);
+}
+pub fn drain_tokens() -> Vec<(&'static str, bool)> {
+    shared_queue().lock().unwrap_or_else(|e| e.into_inner()).drain()
+}
+pub fn release_tokens() {
+    shared_queue().lock().unwrap_or_else(|e| e.into_inner()).release_all();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -243,6 +305,30 @@ mod tests {
         assert_eq!(zalith_event("launcher_event", "launcher.event.scroll_up"), Some(ControlEvent::ScrollUpHeld));
         assert_eq!(zalith_event("launcher_event", "launcher.event.scroll_up.single"), Some(ControlEvent::Token("mouse.scroll.up")));
         assert_eq!(zalith_event("launcher_event", "unimplemented"), None);
+    }
+    #[test]
+    fn queue_balances_shared_keys_and_releases_after_focus_loss() {
+        let mut q = InputQueue::default();
+        q.send("key.keyboard.w", true);
+        q.send("key.keyboard.w", true);
+        assert_eq!(q.drain(), vec![("key.keyboard.w", true)]);
+        q.send("key.keyboard.w", false);
+        assert!(q.drain().is_empty());
+        q.release_all();
+        assert_eq!(q.drain(), vec![("key.keyboard.w", false)]);
+        q.send("key.keyboard.w", false);
+        assert!(q.drain().is_empty());
+    }
+    #[test]
+    fn queue_overflow_releases_already_delivered_input() {
+        let mut q = InputQueue::default();
+        q.send("key.keyboard.w", true);
+        q.drain();
+        for _ in 0..InputQueue::MAX_PENDING {
+            q.send("key.keyboard.a", true);
+            q.send("key.keyboard.a", false);
+        }
+        assert!(q.drain().contains(&("key.keyboard.w", false)));
     }
     #[test]
     fn overlapping_presses_release_only_after_last_owner() {
