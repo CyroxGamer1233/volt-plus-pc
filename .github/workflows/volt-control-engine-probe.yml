@@ -40,6 +40,18 @@ jobs:
               raise SystemExit(f'Pojav converter fixture tests did not run: {tests}')
           print(f'::notice::Original Pojav converter fixture tests executed: {tests}')
           PY
+      - name: Compile experimental engine in Android application
+        run: |
+          set -o pipefail
+          gradle --no-daemon -p packaging/android -Pabi=arm64-v8a -PminSdk=28 \
+            -PexperimentalJavaControls=true compileDebugJavaWithJavac --stacktrace 2>&1 | tee "$RUNNER_TEMP/controls-app-build.log"
+      - name: Confirm default build does not enable engine
+        run: |
+          gradle --no-daemon -q -p packaging/android -Pabi=arm64-v8a projects > "$RUNNER_TEMP/default-projects.log"
+          if grep -q "Project ':layer'" "$RUNNER_TEMP/default-projects.log"; then
+            echo 'Experimental engine unexpectedly enabled in default build' >&2
+            exit 1
+          fi
       - name: Summarize failures
         if: failure()
         run: |
@@ -53,10 +65,11 @@ jobs:
                   for fail in case.findall('failure'):
                       detail = (fail.get('message', '') + ' ' + (fail.text or ''))[:1800]
                       print('::notice::' + (case.get('name', '') + ': ' + detail).replace('%','%25').replace('\n','%0A'))
-          p = Path(os.environ['RUNNER_TEMP']) / 'controls-build.log'
-          if p.exists():
-              lines = p.read_text(errors='replace').splitlines()
-              for i, line in enumerate(lines):
-                  if ' error:' in line or line.startswith('e: ') or line.startswith('* What went wrong:'):
-                      for row in lines[i:i+6]: print('::notice::' + row[:350].replace('%','%25'))
+          for name in ['controls-build.log', 'controls-app-build.log']:
+              p = Path(os.environ['RUNNER_TEMP']) / name
+              if p.exists():
+                  lines = p.read_text(errors='replace').splitlines()
+                  for i, line in enumerate(lines):
+                      if ' error:' in line or line.startswith('e: ') or line.startswith('* What went wrong:'):
+                          for row in lines[i:i+6]: print('::notice::' + row[:350].replace('%','%25'))
           PY

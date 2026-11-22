@@ -62,3 +62,9 @@ android {
     packaging { jniLibs { useLegacyPackaging = true; keepDebugSymbols += '**/*.so' } }
 }
 layout.buildDirectory = file('../../.local/android/gradle-build')
+
+// This is an opt-in build probe, not a feature switch: there is no shipping
+// Java control overlay or editor yet. Do not enable in published APKs.
+if (providers.gradleProperty('experimentalJavaControls').orNull == 'true') {
+    dependencies { implementation project(':layer') }
+}
