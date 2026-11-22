@@ -15132,7 +15132,7 @@ impl Game<'_> {
             self.pad.touch.in_inventory =
                 matches!(self.screen, Screen::Inventory | Screen::Creative);
             self.pad.touch.goy_rendered_by_ui = true;
-            if (in_menu || !self.ui.hide_gui)
+            if !waiting_for_key && (in_menu || !self.ui.hide_gui)
                 && (self.player.is_some() || self.settings.keypad.enabled)
                 && (!hud_in_menu
                     || self.android_inventory_controls()
@@ -15153,7 +15153,7 @@ impl Game<'_> {
                 self.pad.touch.break_progress = self.touch_mining_progress();
                 self.pad.touch.draw(&mut hud, &self.gui.atlas);
             }
-            if !self.settings.keypad.enabled && (in_menu || !self.ui.hide_gui) {
+            if !waiting_for_key && !self.settings.keypad.enabled && (in_menu || !self.ui.hide_gui) {
                 horizon_client::touch_ui::draw_goy_hud(
                     &self.pad.touch,
                     &mut hud,
@@ -15166,7 +15166,7 @@ impl Game<'_> {
         #[cfg(target_os = "android")]
         {
             self.android_sync_pointer();
-            if self.pad.touch.editor.is_none() {
+            if self.pad.touch.editor.is_none() && !(self.screen == Screen::Options && self.options_waiting_for_key()) {
                 self.pad.touch_ui.goy_mode = self.pad.touch.settings.control_style
                     == horizon_client::touch::ControlStyle::GoyControl;
                 self.pad
@@ -16658,6 +16658,15 @@ impl Game<'_> {
                 return;
             };
             self.pad.touch.viewport(size.width, size.height);
+            if self.screen == Screen::Options && self.options_waiting_for_key() {
+                if touch.phase == TouchPhase::Ended {
+                    let b = HudBatch::new([size.width, size.height]);
+                    let events = self.ui.options.touch_key_picker(&mut self.settings,
+                        (b.width, b.height), touch.location.x as f32 / b.scale, touch.location.y as f32 / b.scale);
+                    if let Err(error) = self.handle_option_events(events) { log::warn!("Key picker: {error}"); }
+                }
+                return;
+            }
             if self.pad.touch.editor.is_some() {
                 let ended = matches!(touch.phase, TouchPhase::Ended | TouchPhase::Cancelled);
                 let mut b = HudBatch::new([size.width, size.height]);

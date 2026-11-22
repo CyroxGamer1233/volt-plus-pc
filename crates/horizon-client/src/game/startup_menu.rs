@@ -1565,6 +1565,13 @@ impl Loading {
                 touch.location.x as f32 / b.scale,
                 touch.location.y as f32 / b.scale,
             ];
+            if waiting_for_key {
+                if touch.phase == TouchPhase::Ended {
+                    let changes = self.menu.options.touch_key_picker(&mut self.settings, (b.width, b.height), p[0], p[1]);
+                    self.menu_option_events(changes);
+                }
+                return Ok(());
+            }
             if let Some(gui) = self.gui.as_ref()
                 && let Some(hub_act) = self.menu.touch.floating_menu_touch(
                     &mut b,
@@ -2491,7 +2498,7 @@ impl Loading {
                     self.menu.controls.settings.virtual_mouse_pointer_scale,
                 );
             }
-            if !is_goy
+            if !waiting_for_key && !is_goy
                 && (!hud_in_menu
                     || self.menu.controls.settings.layouts
                         [self.menu.controls.settings.mode.index()]
@@ -2500,7 +2507,7 @@ impl Loading {
             {
                 self.menu.controls.draw(batch, &gui.atlas);
             }
-            horizon_client::touch_ui::draw_goy_hud(
+            if !waiting_for_key { horizon_client::touch_ui::draw_goy_hud(
                 &self.menu.controls,
                 batch,
                 &gui.atlas,
@@ -2511,6 +2518,7 @@ impl Loading {
             self.menu
                 .touch
                 .draw_floating_menu(batch, &gui.atlas, &self.menu.controls.settings);
+            }
         }
         self.menu
             .frame_graph

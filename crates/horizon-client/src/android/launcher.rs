@@ -1,6 +1,8 @@
 //! A native Rust installer and version screen, sharing the game's Vulkan renderer.
 use crate::catalog::{Catalog, Page};
 use crate::game;
+#[path = "cross_road.rs"]
+mod cross_road;
 #[path = "chooser.rs"]
 mod chooser;
 #[path = "launcher_gesture.rs"]
@@ -51,6 +53,8 @@ pub(super) struct Launcher {
     install_paused: Arc<std::sync::atomic::AtomicBool>,
     install_cancelled: Arc<std::sync::atomic::AtomicBool>,
     install_transfer: crate::catalog::TransferTracker,
+    road_game: Option<cross_road::RoadGame>,
+    auto_launch_after_install: bool,
     pub(super) anim: pages::AnimState,
     pub(super) control_editor: Option<horizon_client::touch::TouchControls>,
     worker: Option<mpsc::Receiver<std::result::Result<(), String>>>,
@@ -84,8 +88,14 @@ pub(super) struct Launcher {
 
 impl Launcher {
     fn start_wallpaper(&mut self) {
-        if let Some(i) = self.catalog.config.wallpaper_index
-            && let Some(item) = crate::wallpapers::WALLPAPERS.get(i)
+        let i = crate::wallpapers::effective_index(self.catalog.config.wallpaper_index);
+        if i == crate::wallpapers::DEFAULT_INDEX
+            && let Err(error) = crate::wallpapers::ensure_bundled_default(&self.home)
+        {
+            self.wallpaper_status = format!("Default video unavailable: {error}");
+            return;
+        }
+        if let Some(item) = crate::wallpapers::WALLPAPERS.get(i)
             && let Some(path) = crate::wallpapers::path(&self.home, i)
         {
             if std::fs::metadata(&path).is_ok_and(|m| m.len() == item.size) {
@@ -269,6 +279,8 @@ impl Launcher {
             install_paused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             install_cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             install_transfer: Default::default(),
+            road_game: None,
+            auto_launch_after_install: false,
             anim: Default::default(),
             control_editor: None,
             worker: None,
@@ -446,6 +458,10 @@ impl Launcher {
                 let _ = tc.settings.save_to(&game_home.join("horizon-touch.json"));
                 self.control_editor = None;
             }
+            return;
+        }
+        if self.road_game.is_some() {
+            self.road_game = None;
             return;
         }
         if !self.anim.intro_done {
@@ -792,7 +808,7 @@ impl ApplicationHandler for Launcher {
                 if let Some(r) = &mut self.renderer {
                     r.resize(size.width, size.height);
                 }
-                if let Some(item) = self.catalog.config.wallpaper_index.and_then(|i| crate::wallpapers::WALLPAPERS.get(i)) {
+                if let Some(item) = crate::wallpapers::WALLPAPERS.get(crate::wallpapers::effective_index(self.catalog.config.wallpaper_index)) {
                     let viewport = self.renderer.as_ref().map(|r| [r.config.width, r.config.height])
                         .unwrap_or([size.width, size.height]);
                     let target = crate::wallpapers::frame_size([item.width, item.height], viewport);
@@ -931,12 +947,19 @@ impl ApplicationHandler for Launcher {
         if let Some(result) = self.worker.as_ref().and_then(|w| w.try_recv().ok()) {
             self.worker = None;
             if let Err(error) = result {
+                self.road_game = None;
+                self.auto_launch_after_install = false;
                 let message = error.to_string();
                 if message.contains("Dns Failed") || message.contains("lookup address") {
                     self.fail("Minecraft download interrupted: DNS could not resolve the download host. Check your connection, VPN or Private DNS, then retry Download. Completed files are kept.");
                 } else {
                     self.fail(error);
                 }
+            } else if std::mem::take(&mut self.auto_launch_after_install)
+                && !self.install_cancelled.load(std::sync::atomic::Ordering::Relaxed)
+            {
+                self.road_game = None;
+                if let Err(error) = self.action(events) { self.fail(error); }
             }
         }
         if let Some(tc) = &mut self.control_editor

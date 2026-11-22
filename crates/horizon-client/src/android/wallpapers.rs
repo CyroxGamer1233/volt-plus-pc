@@ -21,6 +21,31 @@ pub const WALLPAPERS: [Wallpaper; 5] = [
     Wallpaper { name: "Sakura blossom house", filename: "sakura-house.mp4", size: 9_270_425, sha256: "ed7f53d57cb874725b870a8f571d30fb20e1b9047a51fe2bce3b254293bd285e", resolution: "1080p", width: 1920, height: 1080 },
 ];
 
+/// The greenhouse ships with the app; `None` in older settings also means default.
+pub const DEFAULT_INDEX: usize = 3;
+pub fn effective_index(index: Option<usize>) -> usize {
+    index.filter(|&i| i < WALLPAPERS.len()).unwrap_or(DEFAULT_INDEX)
+}
+
+/// Restore the original, bundled video once, atomically, without a network request.
+pub fn ensure_bundled_default(home: &Path) -> Result<(), String> {
+    static DEFAULT_VIDEO: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../wallpapers/greenhouse.mp4"));
+    let item = &WALLPAPERS[DEFAULT_INDEX];
+    let target = path(home, DEFAULT_INDEX).ok_or("Invalid default wallpaper")?;
+    if std::fs::metadata(&target).is_ok_and(|m| m.len() == item.size) { return Ok(()); }
+    let dir = target.parent().ok_or("Invalid wallpaper path")?;
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let tmp = target.with_extension("mp4.bundled.part");
+    let result = (|| -> Result<(), String> {
+        std::fs::write(&tmp, DEFAULT_VIDEO).map_err(|e| e.to_string())?;
+        if digest_file(&tmp, item.size)? != item.sha256 { return Err("Bundled video integrity check failed".into()); }
+        std::fs::rename(&tmp, &target).map_err(|e| e.to_string())?;
+        Ok(())
+    })();
+    if result.is_err() { let _ = std::fs::remove_file(&tmp); }
+    result
+}
+
 pub fn digest_file(path: &Path, expected_size: u64) -> Result<String, String> {
     let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
     if file.metadata().map_err(|e| e.to_string())?.len() != expected_size {

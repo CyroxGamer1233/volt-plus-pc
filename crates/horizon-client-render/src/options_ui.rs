@@ -1711,6 +1711,7 @@ pub struct OptionsUi {
     /// Key Binds: the mapping waiting for a key ([`NATIVE_KEY`]: a native
     /// mod's, `selected_native_key`).
     pub selected_key: Option<&'static str>,
+    touch_key_page: usize,
     /// The native mod's key waiting: (mod, key) in `mods.installed`.
     selected_native_key: Option<(usize, usize)>,
     /// Controller Binds: the action waiting for a pad button.
@@ -1781,6 +1782,7 @@ impl Default for OptionsUi {
             slider_value: None,
             scrollbar_drag_y: None,
             selected_key: None,
+            touch_key_page: 0,
             selected_native_key: None,
             selected_pad_action: None,
             pad_style: GlyphStyle::Xbox,
@@ -3723,6 +3725,9 @@ impl OptionsUi {
             self.graphics.binding = self.selected_key;
             self.graphics
                 .draw(level, s, batch, atlas, cursor, self.in_world);
+            if cfg!(target_os = "android") && self.selected_key.is_some() {
+                self.draw_touch_key_picker(batch, atlas);
+            }
             return;
         }
         if self.page() == Page::SplitProfiles {
@@ -4002,6 +4007,66 @@ impl OptionsUi {
         if let Some(lines) = tooltip {
             ui::tooltip(batch, atlas, &lines, cursor);
         }
+        if cfg!(target_os = "android") && self.selected_key.is_some() {
+            self.draw_touch_key_picker(batch, atlas);
+        }
+    }
+
+    fn touch_picker_geometry(size: (f32, f32)) -> (f32, f32, f32, f32) {
+        let width = (size.0 - 24.0).min(440.0).max(40.0);
+        let row_h = ((size.1 - 80.0) / 8.0).clamp(8.0, 24.0);
+        ((size.0 - width) * 0.5, 28.0, width, row_h)
+    }
+    /// A paged Minecraft-style picker, covering every registered keyboard key.
+    pub fn draw_touch_key_picker(&self, batch: &mut HudBatch, atlas: &HudAtlas) {
+        if self.selected_key.is_none() { return; }
+        let size = (batch.width, batch.height);
+        let (left, top, width, row_h) = Self::touch_picker_geometry(size);
+        batch.fill(atlas, 0.0, 0.0, size.0, size.1, crate::hud::rgba(0, 0, 0, 170));
+        let heading = Text::literal("Tap a key to bind it").with_color(text::YELLOW);
+        batch.text_styled(atlas, &heading, (size.0 - atlas.font.width_text(&heading)) * 0.5, 12.0, u32::MAX, true);
+        let keys = keybinds::available_keys();
+        let pages = (keys.len() + 31) / 32;
+        let page = self.touch_key_page.min(pages.saturating_sub(1));
+        let cell_w = width / 4.0;
+        for (i, (token, _)) in keys.iter().skip(page * 32).take(32).enumerate() {
+            let x = left + (i % 4) as f32 * cell_w;
+            let y = top + (i / 4) as f32 * row_h;
+            let label = keybinds::display_name(token);
+            ui::button(batch, atlas, x + 1.0, y + 1.0, cell_w - 2.0, (row_h - 2.0).max(6.0), &label, true, false);
+        }
+        let nav_y = top + 8.0 * row_h + 4.0;
+        ui::button(batch, atlas, left, nav_y, width * 0.28, 20.0, &Text::literal("< Previous"), page > 0, false);
+        ui::button(batch, atlas, left + width * 0.36, nav_y, width * 0.28, 20.0, &Text::literal("Cancel"), true, false);
+        ui::button(batch, atlas, left + width * 0.72, nav_y, width * 0.28, 20.0, &Text::literal("Next >"), page + 1 < pages, false);
+    }
+    /// Called for touch releases, not physical mouse clicks; binding follows the normal save path.
+    pub fn touch_key_picker(&mut self, s: &mut Settings, size: (f32, f32), x: f32, y: f32) -> Vec<Event> {
+        if self.selected_key.is_none() { return Vec::new(); }
+        let (left, top, width, row_h) = Self::touch_picker_geometry(size);
+        let keys = keybinds::available_keys();
+        let pages = (keys.len() + 31) / 32;
+        let page = self.touch_key_page.min(pages.saturating_sub(1));
+        if x >= left && x < left + width && y >= top && y < top + row_h * 8.0 {
+            let col = ((x - left) / (width / 4.0)) as usize;
+            let row = ((y - top) / row_h) as usize;
+            if let Some((token, _)) = keys.get(page * 32 + row * 4 + col) {
+                self.touch_key_page = 0;
+                return self.bind_key(s, (*token).to_owned());
+            }
+        }
+        let nav_y = top + 8.0 * row_h + 4.0;
+        if y >= nav_y && y < nav_y + 20.0 && x >= left && x < left + width {
+            let t = (x - left) / width;
+            if t < 0.28 { self.touch_key_page = page.saturating_sub(1); }
+            else if (0.36..0.64).contains(&t) {
+                self.selected_key = None;
+                self.selected_native_key = None;
+                self.touch_key_page = 0;
+            } else if t >= 0.72 { self.touch_key_page = (page + 1).min(pages.saturating_sub(1)); }
+            return vec![Event::ButtonClick];
+        }
+        Vec::new()
     }
     /// Mouse press/drag. Returns events for the game.
     pub fn click(

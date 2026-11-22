@@ -31,7 +31,7 @@ class WallpaperFixTests(unittest.TestCase):
         page = self.read("crates/horizon-client/src/android/launcher_pages.rs")
         self.assertEqual(page.count("self.draw_scene_background(&mut ui, w,"), 2)
         helper = page.split("fn draw_scene_background(", 1)[1].split("fn draw_pages_with(", 1)[0]
-        self.assertIn("if let Some(index) = self.catalog.config.wallpaper_index", helper)
+        self.assertIn("effective_index(self.catalog.config.wallpaper_index)", helper)
         self.assertIn("if self.wallpaper_has_frame", helper)
         self.assertIn("if self.focused && expected > 0", helper)
         self.assertIn("recycle_wallpaper_buffer(&mut b)", page)

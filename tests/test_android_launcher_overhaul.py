@@ -1396,7 +1396,7 @@ class LauncherOverhaulTests(unittest.TestCase):
 
         # 3. Shared landscape and bottom navigation replace the old hero and rail.
         lp_rs = _read_repo_file("crates/horizon-client/src/android/launcher_pages.rs")
-        self.assertIn('volt_plus_landscape.png', lp_rs)
+        self.assertIn('greenhouse_poster.png', lp_rs)
         self.assertIn('self.wardrobe.draw_scene', lp_rs)
         self.assertIn('let nav_pages = [Page::Play, Page::Mods, Page::Packs, Page::Shaders,', lp_rs)
         self.assertIn('Page::Installed, Page::Skins, Page::Settings]', lp_rs)

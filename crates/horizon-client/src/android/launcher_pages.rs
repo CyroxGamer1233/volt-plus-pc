@@ -281,6 +281,10 @@ pub(super) enum Action {
     Play,
     PauseInstall,
     CancelInstall,
+    OpenRoadGame,
+    CloseRoadGame,
+    RoadMove(i8, i8),
+    RestartRoadGame,
     PauseCatalogDownload,
     CancelCatalogDownload,
     Search,
@@ -872,291 +876,159 @@ fn draw_my3_progress_view(
     pause_action: Action,
     cancel_action: Action,
 ) {
-    let clamped = fraction.clamp(0.0, 1.0);
-    let pulse = (shimmer_phase * std::f32::consts::TAU).sin() * 0.5 + 0.5;
+    use horizon_client::ui_theme::GradientDirection;
+    let progress = fraction.clamp(0.0, 1.0);
+    let cyan = color::hex(0x4cdefa, 255);
+    let violet = color::hex(0xaa67f8, 255);
+    let dim = color::hex(0x0c1829, 205);
+    let line = color::hex(0x96b5d4, 140);
+    let y = (h * 0.12).clamp(54.0, 76.0);
+    let card_h = (h - y - 10.0).max(125.0).min(300.0);
+    let k = (card_h / 250.0).min(1.0);
+    let pad = 16.0 * k;
+    let x = content_x;
+    let w = content_w;
+    let ix = x + pad;
+    let iw = (w - pad * 2.0).max(80.0);
+    // Layered translucent glass, with the background still visible through it.
+    ui.rounded(x - 2.0, y - 2.0, w + 4.0, card_h + 4.0, 20.0 * k, color::hex(0x6da4ed, 32));
+    ui.rounded(x, y, w, card_h, 18.0 * k, color::hex(0x111c30, 215));
+    ui.stroke_rounded(x, y, w, card_h, 18.0 * k, 1.2, line);
+    ui.fill(x + 22.0 * k, y + 1.0, (w - 44.0 * k).max(0.0), 1.0, color::hex(0xd6eafa, 110));
 
-    // Material 3 Expressive Elevated Surface Container
-    let card_y = (h * 0.14).clamp(58.0, 88.0);
-    let card_h = (h - card_y - 20.0).clamp(218.0, 326.0);
-    ui.rounded(content_x, card_y, content_w, card_h, 12.0, my3_surface());
-    ui.border(content_x, card_y, content_w, card_h, 12.0, my3_border());
+    let badge = 43.0 * k;
+    let top = y + pad;
+    ui.rounded(ix, top, badge, badge, 10.0 * k, dim);
+    ui.stroke_rounded(ix, top, badge, badge, 10.0 * k, 1.3, cyan);
+    ui.icon(if paused { Icon::Pause } else { Icon::Packs }, ix + 10.0*k, top + 10.0*k, 23.0*k, my3_text());
+    let pct_w = 60.0*k;
+    let pct_x = x + w - pad - pct_w;
+    ui.rounded(pct_x, top + 4.0*k, pct_w, 33.0*k, 15.0*k, dim);
+    ui.stroke_rounded(pct_x, top + 4.0*k, pct_w, 33.0*k, 15.0*k, 1.5, violet);
+    ui.centered_fit(Face::SemiBold, 15.0*k, [pct_x, top + 4.0*k, pct_w, 33.0*k], my3_text(), &format!("{:.0}%", progress * 100.0));
+    let tx = ix + badge + 13.0*k;
+    let tw = (pct_x - tx - 8.0*k).max(10.0);
+    let heading = ui.fit_text(Face::SemiBold, 20.0*k, title, tw);
+    ui.text(Face::SemiBold, 20.0*k, tx, top + 2.0*k, my3_text(), &heading);
+    let sub = ui.fit_text(Face::Regular, 12.5*k, subtitle_left, tw);
+    ui.text(Face::Regular, 12.5*k, tx, top + 27.0*k, my3_muted(), &sub);
 
-    let inner_x = content_x + 18.0;
-    let inner_w = (content_w - 36.0).max(120.0);
-    let head_y = card_y + 16.0;
-
-    // 1. Animated Header Icon Badge + Title & Live Percentage Pill
-    let badge_sz = 44.0;
-    if !paused {
-        let halo_pad = 2.0 + pulse * 2.5;
-        ui.rounded(
-            inner_x - halo_pad,
-            head_y - halo_pad,
-            badge_sz + halo_pad * 2.0,
-            badge_sz + halo_pad * 2.0,
-            10.0,
-            color::with_alpha(my3_accent(), 0.12 + 0.10 * pulse),
-        );
+    let bar_y = top + 53.0*k;
+    let bar_h = 11.0*k;
+    let value_w = (ui.measure(Face::Medium, 10.5*k, subtitle_right) + 10.0*k).min(iw * 0.38);
+    let bar_w = (iw - value_w - 6.0*k).max(20.0);
+    ui.rounded(ix, bar_y, bar_w, bar_h, bar_h * 0.5, dim);
+    ui.stroke_rounded(ix, bar_y, bar_w, bar_h, bar_h * 0.5, 1.0, line);
+    let fill_w = (bar_w - 2.0).max(0.0) * progress;
+    if fill_w > 1.0 {
+        ui.fill_gradient(ix + 1.0, bar_y + 1.0, fill_w, (bar_h - 2.0).max(1.0), GradientDirection::Horizontal, violet, cyan, None, 24);
     }
-    ui.rounded(inner_x, head_y, badge_sz, badge_sz, 9.0, my3_accent_soft());
-    ui.border(inner_x, head_y, badge_sz, badge_sz, 9.0, my3_accent());
-    let header_icon = if paused {
-        Icon::Pause
-    } else if clamped >= 0.99 {
-        Icon::Check
-    } else {
-        Icon::Packs
-    };
-    ui.icon(
-        header_icon,
-        inner_x + 11.0,
-        head_y + 11.0,
-        22.0,
-        my3_accent(),
-    );
+    let right = ui.fit_text(Face::Medium, 10.5*k, subtitle_right, value_w);
+    ui.text(Face::Medium, 10.5*k, ix + bar_w + 7.0*k, bar_y, my3_text(), &right);
+    let details_y = bar_y + 17.0*k;
+    let detail = if paused { format!("Paused  •  {stage_text}") }
+        else { format!("{stage_text}  •  {speed_label}  •  {eta_label}") };
+    let detail = ui.fit_text(Face::Regular, 11.0*k, &detail, iw);
+    ui.text(Face::Regular, 11.0*k, ix, details_y, my3_muted(), &detail);
 
-    let pct_str = format!("{:.0}%", clamped * 100.0);
-    let pct_pill_w = (ui.measure(Face::SemiBold, 13.0, &pct_str) + 20.0).max(54.0);
-    let pct_pill_x = inner_x + inner_w - pct_pill_w;
-    ui.rounded(pct_pill_x, head_y, pct_pill_w, 26.0, 7.0, my3_accent());
-    ui.centered_fit(
-        Face::SemiBold,
-        12.5,
-        [pct_pill_x + 4.0, head_y, pct_pill_w - 8.0, 26.0],
-        my3_on_accent(),
-        &pct_str,
-    );
-
-    let right_w = ui.measure(Face::Medium, 12.0, subtitle_right);
-    ui.text(
-        Face::Medium,
-        12.0,
-        inner_x + inner_w - right_w,
-        head_y + 30.0,
-        my3_muted(),
-        subtitle_right,
-    );
-
-    let title_x = inner_x + badge_sz + 14.0;
-    let title_max = (pct_pill_x - title_x - 12.0).max(80.0);
-    let title_fitted = ui.fit_text(Face::SemiBold, 19.0, title, title_max);
-    ui.text(
-        Face::SemiBold,
-        19.0,
-        title_x,
-        head_y - 1.0,
-        my3_text(),
-        &title_fitted,
-    );
-
-    let step_badge = format!(
-        "Step {} of {}",
-        (step_index + 1).min(steps.len().max(1)),
-        steps.len().max(1)
-    );
-    let step_badge_w = (ui.measure(Face::SemiBold, 10.5, &step_badge) + 14.0).max(68.0);
-    ui.rounded(
-        title_x,
-        head_y + 25.0,
-        step_badge_w,
-        20.0,
-        6.0,
-        my3_surface_high(),
-    );
-    ui.border(
-        title_x,
-        head_y + 25.0,
-        step_badge_w,
-        20.0,
-        6.0,
-        my3_accent(),
-    );
-    ui.centered_fit(
-        Face::SemiBold,
-        10.5,
-        [title_x + 4.0, head_y + 25.0, step_badge_w - 8.0, 20.0],
-        my3_accent(),
-        &step_badge,
-    );
-
-    let left_x = title_x + step_badge_w + 10.0;
-    let left_max = (inner_x + inner_w - right_w - left_x - 12.0).max(50.0);
-    let left_fitted = ui.fit_text(Face::Regular, 12.0, subtitle_left, left_max);
-    ui.text(
-        Face::Regular,
-        12.0,
-        left_x,
-        head_y + 27.0,
-        my3_muted(),
-        &left_fitted,
-    );
-
-    // 2. Material 2026 (M3 Expressive) Wavy Linear Progress Indicator & Morphing Spinner
-    let bar_y = head_y + 56.0;
-    let bar_h = 14.0;
-    ui.m3_wavy_progress(inner_x, bar_y, inner_w, bar_h, clamped, shimmer_phase, paused);
-    if !paused {
-        ui.m3_wavy_circular_spinner(pct_pill_x - 16.0, head_y + 13.0, 8.5, shimmer_phase);
-    }
-
-    // 3. Telemetry Sub-Card (Active Stage + Transfer Speed & ETA)
-    let telem_y = bar_y + 22.0;
-    let telem_h = 30.0;
-    ui.rounded(inner_x, telem_y, inner_w, telem_h, 8.0, my3_card_bg());
-    ui.border(inner_x, telem_y, inner_w, telem_h, 8.0, my3_card_border());
-    ui.icon(
-        if paused { Icon::Pause } else { Icon::Terminal },
-        inner_x + 10.0,
-        telem_y + 8.0,
-        14.0,
-        my3_accent(),
-    );
-    let metrics_line = format!("{speed_label}  •  {eta_label}");
-    let metrics_w = ui.measure(Face::Medium, 12.0, &metrics_line);
-    let stage_line = if paused {
-        format!("Paused • {stage_text}")
-    } else {
-        stage_text.to_owned()
-    };
-    let stage_max = (inner_w - metrics_w - 44.0).max(70.0);
-    let stage_fitted = ui.fit_text(Face::Regular, 12.0, &stage_line, stage_max);
-    ui.text(
-        Face::Regular,
-        12.0,
-        inner_x + 30.0,
-        telem_y + 6.0,
-        my3_text(),
-        &stage_fitted,
-    );
-    ui.text(
-        Face::Medium,
-        12.0,
-        inner_x + inner_w - metrics_w - 10.0,
-        telem_y + 6.0,
-        my3_accent(),
-        &metrics_line,
-    );
-
-    // 4. Multi-Step Pipeline Cards with Dedicated Vector Icons
-    let step_y = telem_y + 40.0;
+    // A linked timeline with true completed/current/future step states.
+    let timeline_y = details_y + 20.0*k;
+    let timeline_h = 64.0*k;
+    ui.rounded(ix, timeline_y, iw, timeline_h, 12.0*k, dim);
+    ui.border(ix, timeline_y, iw, timeline_h, 12.0*k, line);
     if !steps.is_empty() {
-        let gap = 8.0;
-        let n = steps.len() as f32;
-        let pill_w = ((inner_w - gap * (n - 1.0)) / n).max(40.0);
-        let pill_h = 32.0;
-        for (idx, name) in steps.iter().enumerate() {
-            let px = inner_x + idx as f32 * (pill_w + gap);
-            let done = idx < step_index;
-            let active = idx == step_index;
-            let bg = if active {
-                my3_accent_soft()
-            } else if done {
-                my3_surface_high()
-            } else {
-                my3_card_bg()
-            };
-            let border_col = if active || done {
-                my3_accent()
-            } else {
-                my3_card_border()
-            };
-            ui.rounded(px, step_y, pill_w, pill_h, 8.0, bg);
-            ui.border(px, step_y, pill_w, pill_h, 8.0, border_col);
-
-            let step_icon = if done {
-                Icon::Check
-            } else {
-                match *name {
-                    "Manifest" | "Resolve" => Icon::FileText,
-                    "Metadata" => Icon::Terminal,
-                    "Client JAR" | "Download" => Icon::Packs,
-                    "Verify" => Icon::Search,
-                    "Extract" => Icon::Folder,
-                    _ => Icon::Play,
-                }
-            };
-            let fg = if active || done {
-                my3_text()
-            } else {
-                my3_muted()
-            };
-            let ic_col = if active || done {
-                my3_accent()
-            } else {
-                my3_muted()
-            };
-            ui.icon(step_icon, px + 7.0, step_y + 9.0, 14.0, ic_col);
-            let fitted = ui.fit_text(Face::Medium, 11.0, name, (pill_w - 26.0).max(16.0));
-            ui.text(Face::Medium, 11.0, px + 24.0, step_y + 8.0, fg, &fitted);
-
-            if active && !paused {
-                let sub_w = ((pill_w - 12.0) * (0.25 + 0.75 * pulse)).max(8.0);
-                ui.rounded(
-                    px + 6.0,
-                    step_y + pill_h - 3.5,
-                    sub_w,
-                    2.0,
-                    1.0,
-                    my3_accent(),
-                );
+        let step_w = iw / steps.len() as f32;
+        let cy = timeline_y + 21.0*k;
+        for (i, name) in steps.iter().enumerate() {
+            let cx = ix + step_w * (i as f32 + 0.5);
+            if i > 0 {
+                ui.fill(cx - step_w + 11.0*k, cy - 1.0*k, (step_w - 22.0*k).max(0.0), 2.0*k,
+                    if i <= step_index { violet } else { line });
             }
+            let active = i == step_index;
+            let complete = i < step_index;
+            ui.rounded(cx - 11.0*k, cy - 11.0*k, 22.0*k, 22.0*k, 11.0*k, dim);
+            ui.stroke_rounded(cx - 11.0*k, cy - 11.0*k, 22.0*k, 22.0*k, 11.0*k, 1.6, if active { cyan } else if complete { violet } else { line });
+            let icon = if complete { Icon::Check } else { match *name {
+                "Manifest" | "Resolve" => Icon::FileText,
+                "Metadata" => Icon::Terminal,
+                "Client JAR" | "Download" => Icon::Packs,
+                "Verify" => Icon::Search,
+                "Extract" | "Install" => Icon::Folder,
+                _ => Icon::Play,
+            }};
+            ui.icon(icon, cx - 6.0*k, cy - 6.0*k, 12.0*k, if active || complete { my3_text() } else { my3_muted() });
+            ui.centered_fit(Face::Medium, 10.0*k, [ix + i as f32*step_w + 2.0*k, timeline_y + 40.0*k, (step_w - 4.0*k).max(1.0), 17.0*k], my3_text(), name);
         }
     }
+    let by = y + card_h - 45.0*k;
+    let bh = 32.0*k;
+    let cw = 92.0*k;
+    let pw = 104.0*k;
+    let cx = ix + iw - cw;
+    let px = cx - pw - 9.0*k;
+    for (rect, label, icon, fill, border, action) in [
+        ([px, by, pw, bh], if paused { "Resume" } else { "Pause" }, if paused { Icon::Play } else { Icon::Pause }, color::hex(0x373b92, 225), cyan, pause_action),
+        ([cx, by, cw, bh], "Cancel", Icon::Close, color::hex(0x792b5b, 225), color::hex(0xf47fb8, 255), cancel_action),
+    ] {
+        ui.rounded(rect[0], rect[1], rect[2], rect[3], 10.0*k, fill);
+        ui.stroke_rounded(rect[0], rect[1], rect[2], rect[3], 10.0*k, 1.2, border);
+        ui.icon(icon, rect[0] + 12.0*k, rect[1] + 9.0*k, 14.0*k, my3_text());
+        ui.text(Face::SemiBold, 12.0*k, rect[0] + 32.0*k, rect[1] + 8.0*k, my3_text(), label);
+        targets.push((rect, action));
+    }
+    let _ = shimmer_phase;
 
-    // 5. Bottom-Right Material 3 Action Buttons (Pause/Resume & Cancel with Vector Icons)
-    let btn_y = (card_y + card_h - 48.0).max(step_y + 40.0);
-    let btn_h = 36.0;
-    let cancel_w = 96.0;
-    let pause_w = 104.0;
-    let cancel_x = inner_x + inner_w - cancel_w;
-    let pause_x = cancel_x - pause_w - 10.0;
+}
 
-    let pause_rect = [pause_x, btn_y, pause_w, btn_h];
-    ui.rounded(pause_rect[0], pause_rect[1], pause_rect[2], pause_rect[3], 8.0, my3_pause_bg());
-    ui.border(pause_rect[0], pause_rect[1], pause_rect[2], pause_rect[3], 8.0, my3_accent());
-    ui.icon(
-        if paused { Icon::Play } else { Icon::Pause },
-        pause_rect[0] + 12.0,
-        pause_rect[1] + 10.0,
-        16.0,
-        my3_accent(),
-    );
-    ui.text(
-        Face::SemiBold,
-        12.5,
-        pause_rect[0] + 34.0,
-        pause_rect[1] + 9.0,
-        my3_text(),
-        if paused { "Resume" } else { "Pause" },
-    );
-    targets.push((pause_rect, pause_action));
-
-    let cancel_rect = [cancel_x, btn_y, cancel_w, btn_h];
-    ui.rounded(cancel_rect[0], cancel_rect[1], cancel_rect[2], cancel_rect[3], 8.0, my3_cancel_bg());
-    ui.border(
-        cancel_rect[0],
-        cancel_rect[1],
-        cancel_rect[2],
-        cancel_rect[3],
-        8.0,
-        horizon_client::ui_theme::active_theme().danger,
-    );
-    ui.icon(
-        Icon::Close,
-        cancel_rect[0] + 12.0,
-        cancel_rect[1] + 10.0,
-        16.0,
-        my3_text(),
-    );
-    ui.text(
-        Face::SemiBold,
-        12.5,
-        cancel_rect[0] + 34.0,
-        cancel_rect[1] + 9.0,
-        my3_text(),
-        "Cancel",
-    );
-    targets.push((cancel_rect, cancel_action));
+/// Original geometric art: a lane-crossing game, not Crossy Road assets.
+fn draw_cross_road(ui: &mut Ui, targets: &mut Vec<([f32; 4], Action)>, road: &super::cross_road::RoadGame) {
+    let (w, h) = (ui.w, ui.h);
+    ui.fill(0.0, 0.0, w, h, color::hex(0x102a2b, 255));
+    let tile = (h / 9.0).min(w / 13.0).max(10.0);
+    let board_w = tile * 9.0;
+    let bx = (w - board_w) * 0.5;
+    let by = 34.0;
+    for i in 0..8 {
+        let row = (road.row + 5 - i).max(0);
+        let y = by + i as f32 * tile;
+        let pavement = super::cross_road::RoadGame::road(row);
+        ui.fill(bx, y, board_w, tile, if pavement { color::hex(0x343e4b, 255) } else { color::hex(0x477c58, 255) });
+        if pavement {
+            for d in 0..5 { ui.fill(bx + (d as f32 * 2.0 + 0.4) * tile, y + tile*0.47, tile*0.8, tile*0.05, color::hex(0xf2d696, 135)); }
+            for car in 0..2 {
+                let cx = road.car_x(row, car);
+                if (-0.8..9.0).contains(&cx) {
+                    let left = (bx + cx * tile).max(bx);
+                    let right = (bx + (cx + 0.8) * tile).min(bx + board_w);
+                    if right > left {
+                        ui.rounded(left, y + tile*0.14, right-left, tile*0.72, tile*0.12, if (row+car)%2 == 0 { color::hex(0xe45f5b,255) } else { color::hex(0x63bad5,255) });
+                        ui.fill(left + (right-left)*0.2, y + tile*0.25, (right-left)*0.38, tile*0.18, color::hex(0xd4f2ff,220));
+                    }
+                }
+            }
+        }
+        if row == road.row && i == 5 {
+            let x = bx + road.x as f32 * tile + tile*0.14;
+            ui.rounded(x, y + tile*0.14, tile*0.72, tile*0.72, tile*0.12, color::hex(0xffdf87,255));
+            ui.fill(x + tile*0.12, y + tile*0.25, tile*0.09, tile*0.09, color::hex(0x222030,255));
+            ui.fill(x + tile*0.48, y + tile*0.25, tile*0.09, tile*0.09, color::hex(0x222030,255));
+        }
+    }
+    ui.text(Face::SemiBold, 16.0, 15.0, 10.0, my3_text(), "Cross the Road");
+    ui.text(Face::Medium, 12.0, w - 120.0, 14.0, my3_text(), &format!("Score: {}", road.best));
+    button(ui, targets, [15.0, h - 48.0, 85.0, 34.0], "Back", Action::CloseRoadGame, false);
+    let x = w - 155.0;
+    let y = h - 83.0;
+    if road.dead {
+        button(ui, targets, [x - 10.0, y + 24.0, 140.0, 34.0], "Try again", Action::RestartRoadGame, true);
+    } else {
+        button(ui, targets, [x + 42.0, y, 38.0, 32.0], "↑", Action::RoadMove(0, 1), true);
+        button(ui, targets, [x, y + 35.0, 38.0, 32.0], "←", Action::RoadMove(-1, 0), false);
+        button(ui, targets, [x + 42.0, y + 35.0, 38.0, 32.0], "↓", Action::RoadMove(0, -1), false);
+        button(ui, targets, [x + 84.0, y + 35.0, 38.0, 32.0], "→", Action::RoadMove(1, 0), false);
+    }
+    if road.dead { ui.centered_fit(Face::SemiBold, 18.0, [bx, h*0.42, board_w, 28.0], my3_text(), "Oops! Try again"); }
 }
 
 impl Launcher {
@@ -1247,7 +1119,7 @@ impl Launcher {
         glass.accent_text = color::hex(0xeee6ff, 255);
         glass.text_primary = color::hex(0xffffff, 255);
         glass.text_muted = color::hex(0xd9d3e5, 255);
-        if let Some([r, g, b]) = self.wallpaper_color.filter(|_| self.catalog.config.wallpaper_index.is_some()) {
+        if let Some([r, g, b]) = self.wallpaper_color {
             let rgb = |r: u8, g: u8, b: u8| (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b);
             let dark = |v: u8| (u16::from(v) * 18 / 100 + 12).min(90) as u8;
             let medium = |v: u8| (u16::from(v) * 55 / 100 + 50).min(215) as u8;
@@ -1284,7 +1156,7 @@ impl Launcher {
             if !motion_ok { *offset = 0.0; }
         }
         static SCENE: std::sync::OnceLock<Option<image::RgbaImage>> = std::sync::OnceLock::new();
-        let scene = SCENE.get_or_init(|| image::load_from_memory(include_bytes!("../../assets/volt_plus_landscape.png"))
+        let scene = SCENE.get_or_init(|| image::load_from_memory(include_bytes!("../../assets/greenhouse_poster.png"))
             .ok().map(|image| image.to_rgba8()));
         ui.fill(0.0, 0.0, w, full_h, color::hex(0x171822, 255));
         if let Some(scene) = scene {
@@ -1298,8 +1170,8 @@ impl Launcher {
             let y = -dy + self.anim.scene_offset[1] * dy * 0.95;
             ui.scene_image(scene.width(), scene.height(), scene.as_raw(), x, y, sw, sh);
         }
-        if let Some(index) = self.catalog.config.wallpaper_index
-            && let Some(item) = crate::wallpapers::WALLPAPERS.get(index)
+        let index = crate::wallpapers::effective_index(self.catalog.config.wallpaper_index);
+        if let Some(item) = crate::wallpapers::WALLPAPERS.get(index)
         {
             let [frame_w, frame_h] = self.wallpaper_frame_size;
             let expected = frame_w as usize * frame_h as usize * 4;
@@ -1348,6 +1220,18 @@ impl Launcher {
         SLIDER_TRACK_TARGETS.with(|t| t.borrow_mut().clear());
         self.list_targets.clear();
         self.list_view = None;
+
+        if let Some(road) = &mut self.road_game {
+            road.tick(self.focused);
+            let mut b = HudBatch::new([r.config.width, r.config.height]);
+            let mut ui = Ui::mobile(&gui.atlas, &mut b, (0.0, 0.0));
+            draw_cross_road(&mut ui, &mut self.targets, road);
+            ui.finish();
+            if !r.render(&game::loading_frame(&b))? && !b.patches.is_empty() {
+                horizon_client::ui_theme::reset_atlas();
+            }
+            return Ok(());
+        }
 
         // Keep the same wallpaper behind the full-screen touch layout editor.
         if self.control_editor.is_some() {
@@ -1485,8 +1369,6 @@ impl Launcher {
             let frac = self.catalog.progress_fraction().clamp(0.0, 1.0);
             self.anim.progress_smooth += (frac - self.anim.progress_smooth) * 0.25;
             let smooth_frac = self.anim.progress_smooth.clamp(0.04, 1.0);
-            let total_mib = f64::from(self.catalog.downloading_size_mib.max(1.0));
-            let done_mib = (total_mib * f64::from(frac)).clamp(0.0, total_mib);
             let title = if self.catalog.downloading_title.is_empty() {
                 "Downloading add-on...".to_owned()
             } else {
@@ -1497,7 +1379,7 @@ impl Launcher {
                 source_id.label(),
                 self.catalog.config.profile + 1
             );
-            let sub_right = format!("{done_mib:.1} / {total_mib:.1} MiB ({:.0}%)", frac * 100.0);
+            let sub_right = format!("{:.0}%", frac * 100.0);
             let stage = self.catalog.progress_stage();
             let step_idx = if frac < 0.15 {
                 0
@@ -1517,8 +1399,8 @@ impl Launcher {
                 &title,
                 &sub_left,
                 &sub_right,
-                &self.catalog.transfer.speed_label(),
-                &self.catalog.transfer.eta_label(done_mib, total_mib),
+                "Speed unavailable",
+                "ETA unavailable",
                 step_idx,
                 &["Resolve", "Download", "Verify", "Install"],
                 smooth_frac,
@@ -1553,7 +1435,7 @@ impl Launcher {
                             progress.total as f64 / 1_048_576.0,
                         )
                     } else {
-                        (55.3 * f64::from(overall), 55.3)
+                        (0.0, 0.0)
                     };
                 let paused = self.install_paused.load(Ordering::Relaxed);
                 self.install_transfer.observe(done_mib, paused);
@@ -1561,10 +1443,9 @@ impl Launcher {
                     "Minecraft 26.3 • Profile {}",
                     self.catalog.config.profile + 1
                 );
-                let sub_right = format!(
-                    "{done_mib:.1} / {total_mib:.1} MiB ({:.0}%)",
-                    overall * 100.0
-                );
+                let sub_right = if total_mib > 0.0 {
+                    format!("{done_mib:.1} / {total_mib:.1} MiB")
+                } else { format!("Step {} / 6", current + 1) };
                 let stage_text = match progress.stage {
                     InstallStage::Download => "Downloading Java Edition 26.3 client.jar",
                     other => other.label(),
@@ -1578,8 +1459,8 @@ impl Launcher {
                     "Getting your game ready",
                     &sub_left,
                     &sub_right,
-                    &self.install_transfer.speed_label(),
-                    &self.install_transfer.eta_label(done_mib, total_mib),
+                    &if total_mib > 0.0 { self.install_transfer.speed_label() } else { "Speed unavailable".into() },
+                    &if total_mib > 0.0 { self.install_transfer.eta_label(done_mib, total_mib) } else { "ETA unavailable".into() },
                     current,
                     &[
                         "Manifest",
@@ -1596,6 +1477,8 @@ impl Launcher {
                     Action::PauseInstall,
                     Action::CancelInstall,
                 );
+                let game_button = [content_x + 16.0, h - 36.0, 150.0, 29.0];
+                button(&mut ui, &mut self.targets, game_button, "Play Cross the Road", Action::OpenRoadGame, true);
             } else {
                 let is_launching = self.launching || self.session_worker.is_some();
                 let label = if is_launching { "Launching..." } else if installed {
@@ -2285,9 +2168,9 @@ impl Launcher {
                 let label = format!("{}  ·  {}  ·  {:.1} MB", item.name, item.resolution, item.size as f64 / 1_000_000.0);
                 let fitted = ui.fit_text(Face::Regular, 11.0, &label, (mw - 132.0).max(50.0));
                 ui.text(Face::Regular, 11.0, mx + 16.0, y + 6.0, my3_text(), &fitted);
-                let downloaded = crate::wallpapers::path(&self.home, i)
+                let downloaded = i == crate::wallpapers::DEFAULT_INDEX || crate::wallpapers::path(&self.home, i)
                     .and_then(|p| std::fs::metadata(p).ok()).is_some_and(|m| m.len() == item.size);
-                let selected = self.catalog.config.wallpaper_index == Some(i);
+                let selected = crate::wallpapers::effective_index(self.catalog.config.wallpaper_index) == i;
                 let title = if self.wallpaper_worker.is_some() { "Busy" } else if selected { "Equipped" } else if downloaded { "Equip" } else { "Download" };
                 let action = if downloaded { Action::EquipWallpaper(i) } else { Action::DownloadWallpaper(i) };
                 button(&mut ui, &mut self.targets, [mx + mw - 108.0, y, 92.0, row_h - 2.0], title, action, selected);
@@ -6398,7 +6281,22 @@ impl Launcher {
                 let next = !self.install_paused.load(Ordering::Relaxed);
                 self.install_paused.store(next, Ordering::Relaxed);
             }
+            Some(Action::OpenRoadGame) => {
+                if self.worker.is_some() {
+                    self.auto_launch_after_install = true;
+                    self.road_game = Some(super::cross_road::RoadGame::default());
+                }
+            }
+            Some(Action::CloseRoadGame) => self.road_game = None,
+            Some(Action::RoadMove(dx, dy)) => {
+                if let Some(road) = &mut self.road_game { road.move_by(i32::from(dx), i32::from(dy)); }
+            }
+            Some(Action::RestartRoadGame) => {
+                self.road_game = Some(super::cross_road::RoadGame::default());
+            }
             Some(Action::CancelInstall) => {
+                self.auto_launch_after_install = false;
+                self.road_game = None;
                 self.install_cancelled.store(true, Ordering::Relaxed);
                 self.install_paused.store(false, Ordering::Relaxed);
                 self.worker = None;
@@ -7368,7 +7266,7 @@ impl Launcher {
             Some(Action::EquipWallpaper(i)) => {
                 if self.wallpaper_worker.is_none() && let Some(item) = crate::wallpapers::WALLPAPERS.get(i)
                     && let Some(path) = crate::wallpapers::path(&self.home, i)
-                    && std::fs::metadata(path).is_ok_and(|m| m.len() == item.size)
+                    && (i == crate::wallpapers::DEFAULT_INDEX || std::fs::metadata(path).is_ok_and(|m| m.len() == item.size))
                 {
                     self.catalog.config.wallpaper_index = Some(i);
                     self.wallpaper_has_frame = false;
@@ -7384,7 +7282,8 @@ impl Launcher {
                 self.catalog.config.save(&self.home)?;
                 self.wallpaper_has_frame = false;
                 self.wallpaper_color = None;
-                self.wallpaper_status = "Default background selected".into();
+                self.wallpaper_status = "Peaceful greenhouse selected".into();
+                self.start_wallpaper();
             }
             Some(Action::OpenWallpapers) => { self.wallpapers_open = true; }
             Some(Action::CloseWallpapers) => { self.wallpapers_open = false; }
