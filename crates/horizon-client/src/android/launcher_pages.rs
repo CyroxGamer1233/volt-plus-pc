@@ -270,6 +270,9 @@ impl AnimState {
 pub(super) enum Action {
     Page(Page),
     SceneGyro(i8),
+    OpenWallpapers,
+    CloseWallpapers,
+    DownloadWallpaper(usize),
     SettingsCat(SettingsCategory),
     Play,
     PauseInstall,
@@ -1334,6 +1337,8 @@ impl Launcher {
         let label = ui.fit_text(Face::Medium, 11.0, &account_name, 45.0);
         ui.text(Face::Medium, 11.0, 49.0, 63.0, my3_text(), &label);
         self.targets.push((account_rect, Action::Account));
+        button(&mut ui, &mut self.targets, [w - 174.0, 12.0, 162.0, 34.0],
+            "Background images", Action::OpenWallpapers, false);
 
         let page = self.catalog.page;
         let target_shift = if page == Page::Play { 0.0 } else { 1.0 };
@@ -2174,6 +2179,37 @@ impl Launcher {
                 Action::CancelReplaceDuplicatePreset,
                 false,
             );
+        }
+        if let Some(result) = self.wallpaper_worker.as_ref().and_then(|worker| worker.try_recv().ok()) {
+            self.wallpaper_worker = None;
+            self.wallpaper_status = result.unwrap_or_else(|e| format!("Download failed: {e}"));
+        }
+        if self.wallpapers_open {
+            self.targets.clear();
+            self.list_targets.clear();
+            self.list_view = None;
+            ui.fill(0.0, 0.0, w, full_h, horizon_client::hud::rgba(4, 5, 10, 220));
+            let mx = 16.0;
+            let mw = (w - 32.0).max(200.0);
+            let my = 12.0;
+            let mh = (full_h - 24.0).max(180.0);
+            ui.rounded(mx, my, mw, mh, 18.0, my3_surface());
+            ui.border(mx, my, mw, mh, 18.0, my3_border());
+            ui.text(Face::SemiBold, 17.0, mx + 16.0, my + 12.0, my3_text(), "Background images");
+            button(&mut ui, &mut self.targets, [mx + mw - 76.0, my + 8.0, 64.0, 30.0], "Close", Action::CloseWallpapers, false);
+            let grid_y = my + 48.0;
+            let row_h = ((mh - 112.0) / 5.0).clamp(23.0, 42.0);
+            for (i, item) in crate::wallpapers::WALLPAPERS.iter().enumerate() {
+                let y = grid_y + i as f32 * row_h;
+                let label = format!("{}  ·  {}  ·  {:.1} MB", item.name, item.resolution, item.size as f64 / 1_000_000.0);
+                let fitted = ui.fit_text(Face::Regular, 11.0, &label, (mw - 132.0).max(50.0));
+                ui.text(Face::Regular, 11.0, mx + 16.0, y + 6.0, my3_text(), &fitted);
+                let title = if self.wallpaper_worker.is_some() { "Busy" } else { "Download" };
+                button(&mut ui, &mut self.targets, [mx + mw - 108.0, y, 92.0, row_h - 2.0], title, Action::DownloadWallpaper(i), false);
+            }
+            let line = ui.fit_text(Face::Regular, 10.0, &self.wallpaper_status, mw - 32.0);
+            ui.text(Face::Regular, 10.0, mx + 16.0, my + mh - 34.0, my3_muted(), &line);
+            ui.text(Face::Regular, 9.0, mx + 16.0, my + mh - 19.0, my3_muted(), "Live playback and equip are not available yet.");
         }
         if self.diagnostics_modal_open {
             self.draw_diagnostics_summary_modal(&mut ui, w, h);
@@ -7258,6 +7294,17 @@ impl Launcher {
                     if !is_horizon_paged {
                         self.catalog.search(&self.home);
                     }
+                }
+            }
+            Some(Action::OpenWallpapers) => { self.wallpapers_open = true; }
+            Some(Action::CloseWallpapers) => { self.wallpapers_open = false; }
+            Some(Action::DownloadWallpaper(i)) => {
+                if self.wallpaper_worker.is_none() && i < crate::wallpapers::WALLPAPERS.len() {
+                    let home = self.home.clone();
+                    let (sender, receiver) = std::sync::mpsc::channel();
+                    self.wallpaper_worker = Some(receiver);
+                    self.wallpaper_status = format!("Downloading {}...", crate::wallpapers::WALLPAPERS[i].name);
+                    std::thread::spawn(move || { let _ = sender.send(crate::wallpapers::download(&home, i)); });
                 }
             }
             Some(Action::SceneGyro(direction)) => {
