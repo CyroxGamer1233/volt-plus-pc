@@ -45,6 +45,8 @@ def main():
             @Override public void onCreate(android.os.Bundle state) {
               super.onCreate(state);
               android.widget.TextView text = new android.widget.TextView(this);
+              text.setBackgroundColor(android.graphics.Color.BLACK);
+              text.setTextColor(android.graphics.Color.WHITE);
               text.setText("Launcher ready"); setContentView(text);
             }
           }''')
