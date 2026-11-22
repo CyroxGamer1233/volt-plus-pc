@@ -38,6 +38,12 @@ pub(super) struct Wardrobe {
     worker: Option<mpsc::Receiver<(String, Result<(cloud::Cache, bool), String>)>>,
     bitmap: image::RgbaImage,
     bitmap_revision: u64,
+    preview_skin: Option<std::sync::Arc<image::RgbaImage>>,
+    preview_cape: Option<std::sync::Arc<image::RgbaImage>>,
+    preview_model: Model,
+    appearance_generation: u64,
+    render_worker: Option<mpsc::Receiver<(u64, image::RgbaImage)>>,
+    render_pending: bool,
     head_bitmap: Vec<([f32; 4], u32)>,
     rect: [f32; 4],
     fingers: std::collections::BTreeMap<u64, [f32; 2]>,
@@ -71,6 +77,12 @@ impl Wardrobe {
             worker: None,
             bitmap: image::RgbaImage::new(384, 480),
             bitmap_revision: 0,
+            preview_skin: None,
+            preview_cape: None,
+            preview_model: Model::Classic,
+            appearance_generation: 0,
+            render_worker: None,
+            render_pending: false,
             head_bitmap: vec![],
             rect: [0.0; 4],
             view: [0.0; 3],
@@ -424,12 +436,57 @@ impl Wardrobe {
         }
         // Rasterize at more than twice the former dimensions. The skin's own
         // Minecraft texels remain sharp; model edges no longer use large quads.
-        self.bitmap = preview::render(&skin, cape.as_ref(), model, self.camera, [384, 480]);
+        // Invalidate any in-flight render from the previous appearance.
+        self.appearance_generation = self.appearance_generation.wrapping_add(1);
+        self.render_pending = false;
+        self.preview_skin = Some(std::sync::Arc::new(skin));
+        self.preview_cape = cape.map(std::sync::Arc::new);
+        self.preview_model = model;
+        self.bitmap = preview::render(self.preview_skin.as_ref().unwrap(), self.preview_cape.as_deref(), model, self.camera, [384, 480]);
         self.bitmap_revision = self.bitmap_revision.wrapping_add(1);
+    }
+    // One worker at a time; movements are coalesced to the most recent camera.
+    // No filesystem reads, skin decode or head reconstruction on pointer events.
+    fn queue_camera_render(&mut self) {
+        self.render_pending = true;
+        self.start_camera_render();
+    }
+    fn start_camera_render(&mut self) {
+        if self.render_worker.is_some() || !self.render_pending { return; }
+        let Some(skin) = self.preview_skin.clone() else { return; };
+        let cape = self.preview_cape.clone();
+        let model = self.preview_model;
+        let camera = self.camera;
+        let generation = self.appearance_generation;
+        self.render_pending = false;
+        let (tx, rx) = mpsc::channel();
+        self.render_worker = Some(rx);
+        std::thread::spawn(move || {
+            let image = preview::render(&skin, cape.as_deref(), model, camera, [384, 480]);
+            let _ = tx.send((generation, image));
+        });
+    }
+    fn poll_camera_render(&mut self) {
+        let result = self.render_worker.as_ref().and_then(|worker| match worker.try_recv() {
+            Ok(result) => Some(Some(result)),
+            Err(mpsc::TryRecvError::Disconnected) => Some(None),
+            Err(mpsc::TryRecvError::Empty) => None,
+        });
+        if let Some(result) = result {
+            self.render_worker = None;
+            if let Some((generation, image)) = result {
+                if generation == self.appearance_generation {
+                    self.bitmap = image;
+                    self.bitmap_revision = self.bitmap_revision.wrapping_add(1);
+                }
+            }
+            self.start_camera_render();
+        }
     }
     pub fn is_animating(&self) -> bool {
         let now = std::time::Instant::now();
         self.worker.is_some()
+            || self.render_worker.is_some() || self.render_pending
             || crate::documents::busy()
             || self
                 .tab_changed_at
@@ -466,6 +523,7 @@ impl Wardrobe {
     /// The same applied-skin preview used by the wardrobe, placed in the shared scene.
     /// Keeping the hit rectangle here makes drag/pinch orbit work on the dashboard too.
     pub fn draw_scene(&mut self, ui: &mut Ui, rect: [f32; 4]) {
+        self.poll_camera_render();
         self.rect = rect;
         let [x, y, w, h] = rect;
         let scale = (w / 160.0).min(h / 200.0);
@@ -523,7 +581,7 @@ impl Wardrobe {
             self.camera.drag(point[0] - old[0], point[1] - old[1]);
         }
         self.fingers.insert(touch.id, point);
-        self.preview();
+        self.queue_camera_render();
         true
     }
 

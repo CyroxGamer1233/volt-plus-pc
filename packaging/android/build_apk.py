@@ -141,6 +141,7 @@ def assets(out):
     folder = out / "assets"
     shutil.rmtree(folder, ignore_errors=True)
     folder.mkdir()
+    shutil.copyfile(HERE / "media" / "intro.mp4", folder / "intro.mp4")
     with zipfile.ZipFile(folder / "prepare-kit.zip", "w", zipfile.ZIP_DEFLATED) as kit:
         for entry in PREPARE_KIT:
             path = ROOT / entry
@@ -201,7 +202,7 @@ def link_resources(aapt2, android_jar, out, assets, variant):
         "--min-sdk-version", MIN_SDK, "--target-sdk-version", TARGET_SDK,
         "--version-code", VERSION_CODE, "--version-name", VERSION_NAME,
         *debug,
-        "-A", assets,
+        "-0", "mp4", "-A", assets,
         *sorted(compiled.glob("*.flat")),
     )
 

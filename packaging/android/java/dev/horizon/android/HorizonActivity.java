@@ -7,6 +7,14 @@ public final class HorizonActivity extends android.app.NativeActivity {
             "b83e95a3ff2ff82509300f132506d61b1ca3572a61e80b8588f8be815f7b9b05";
     private boolean loaded;
     private java.io.File nativeLibrary;
+    // The overlay owns a hardware-decoded TextureView above the native Vulkan surface.
+    // Black matches the first and last frames and the system starting window.
+    private android.widget.FrameLayout introOverlay;
+    private android.media.MediaPlayer introPlayer;
+    private android.view.Surface introSurface;
+    private boolean nativeReady, videoFinished;
+    private volatile boolean introFinished;
+
 
     private static volatile boolean sCancelFolderCopy = false;
     private static volatile int sCopyFilesDone = 0;
@@ -35,6 +43,7 @@ public final class HorizonActivity extends android.app.NativeActivity {
 
     @Override protected void onPause() {
         WallpaperPlayer.get().stop();
+        if (introOverlay != null) finishVideo();
         super.onPause();
     }
 
@@ -42,6 +51,7 @@ public final class HorizonActivity extends android.app.NativeActivity {
         loadGame();
         super.onCreate(savedInstanceState);
         applyHighRefreshRate(this, 0);
+        showIntro();
     }
 
     private void loadGame() {
@@ -107,7 +117,79 @@ public final class HorizonActivity extends android.app.NativeActivity {
 
     public void firstFrame() {
         NativeMods.started(this);
+        runOnUiThread(() -> { nativeReady = true; removeIntroIfReady(); });
         askModPermissions();
+    }
+
+    public boolean introFinished() { return introFinished; }
+
+    private void showIntro() {
+        introOverlay = new android.widget.FrameLayout(this);
+        introOverlay.setBackgroundColor(android.graphics.Color.BLACK);
+        android.view.TextureView video = new android.view.TextureView(this);
+        introOverlay.addView(video, new android.widget.FrameLayout.LayoutParams(-1, -1));
+        addContentView(introOverlay, new android.view.ViewGroup.LayoutParams(-1, -1));
+        // Broken codecs or a lost surface must never trap the user on a black screen.
+        video.postDelayed(() -> { if (!videoFinished) finishVideo(); }, 15000);
+        video.setSurfaceTextureListener(new android.view.TextureView.SurfaceTextureListener() {
+            @Override public void onSurfaceTextureAvailable(android.graphics.SurfaceTexture texture, int w, int h) {
+                if (videoFinished) return;
+                try {
+                    introSurface = new android.view.Surface(texture);
+                    introPlayer = new android.media.MediaPlayer();
+                    try (android.content.res.AssetFileDescriptor fd = getAssets().openFd("intro.mp4")) {
+                        introPlayer.setDataSource(fd.getFileDescriptor(), fd.getStartOffset(), fd.getLength());
+                    }
+                    introPlayer.setSurface(introSurface);
+                    introPlayer.setOnVideoSizeChangedListener((mp, vw, vh) -> {
+                        if (vw <= 0 || vh <= 0 || video.getWidth() <= 0 || video.getHeight() <= 0) return;
+                        // Fit, not crop: the decoded 1920x1080 source remains intact.
+                        float scale = Math.min((float) video.getWidth() / vw, (float) video.getHeight() / vh);
+                        float sx = vw * scale / video.getWidth(), sy = vh * scale / video.getHeight();
+                        android.graphics.Matrix matrix = new android.graphics.Matrix();
+                        matrix.setScale(sx, sy, video.getWidth() / 2f, video.getHeight() / 2f);
+                        video.setTransform(matrix);
+                    });
+                    introPlayer.setOnPreparedListener(android.media.MediaPlayer::start);
+                    introPlayer.setOnCompletionListener(mp -> finishVideo());
+                    introPlayer.setOnErrorListener((mp, what, extra) -> { finishVideo(); return true; });
+                    introPlayer.prepareAsync();
+                } catch (Exception e) { finishVideo(); }
+            }
+            @Override public void onSurfaceTextureSizeChanged(android.graphics.SurfaceTexture t, int w, int h) { }
+            @Override public boolean onSurfaceTextureDestroyed(android.graphics.SurfaceTexture t) {
+                finishVideo(); return true;
+            }
+            @Override public void onSurfaceTextureUpdated(android.graphics.SurfaceTexture t) { }
+        });
+    }
+
+    private void finishVideo() {
+        if (videoFinished) return;
+        videoFinished = true;
+        if (introPlayer != null) { introPlayer.release(); introPlayer = null; }
+        if (introSurface != null) { introSurface.release(); introSurface = null; }
+        removeIntroIfReady();
+    }
+
+    private void removeIntroIfReady() {
+        if (!nativeReady || !videoFinished || introFinished) return;
+        introFinished = true;
+        if (introOverlay != null) {
+            android.view.ViewGroup parent = (android.view.ViewGroup) introOverlay.getParent();
+            if (parent != null) parent.removeView(introOverlay);
+            introOverlay = null;
+        }
+    }
+
+    @Override protected void onDestroy() {
+        if (introOverlay != null) finishVideo();
+        super.onDestroy();
+    }
+
+    @Override public void onBackPressed() {
+        if (introOverlay != null) { finishVideo(); return; }
+        super.onBackPressed();
     }
 
     private void askModPermissions() {

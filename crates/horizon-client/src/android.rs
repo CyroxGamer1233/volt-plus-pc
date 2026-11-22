@@ -60,6 +60,13 @@ pub fn first_frame_shown() {
     });
 }
 
+/// The Android video overlay is gone and the first native frame is ready.
+pub fn intro_finished() -> bool {
+    crate::platform::with_context(|env, activity| {
+        env.call_method(activity, "introFinished", "()Z", &[])?.z()
+    }).unwrap_or(true)
+}
+
 /// The APK's `versionName` and whether it is signed with the official release certificate.
 pub fn app_version() -> Option<(String, bool)> {
     crate::platform::with_context(|env, activity| {

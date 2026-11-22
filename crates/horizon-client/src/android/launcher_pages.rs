@@ -100,6 +100,7 @@ pub(crate) struct AnimState {
     pub intro_start: Option<std::time::Instant>,
     pub intro_elapsed: f32,
     pub intro_done: bool,
+    pub reveal_start: Option<std::time::Instant>,
     pub switches: std::collections::HashMap<String, f32>,
     pub scene_offset: [f32; 2],
     pub scene_shift: f32,
@@ -127,6 +128,7 @@ impl Default for AnimState {
             intro_start: Some(std::time::Instant::now()),
             intro_elapsed: 0.0,
             intro_done: false,
+            reveal_start: None,
             switches: std::collections::HashMap::new(),
             scene_offset: [0.0; 2],
             scene_shift: 0.0,
@@ -246,7 +248,7 @@ impl AnimState {
     }
 
     pub fn is_active(&self) -> bool {
-        if !self.intro_done {
+        if !self.intro_done || self.reveal_start.is_some_and(|t| t.elapsed().as_secs_f32() < 1.6) {
             return true;
         }
         if horizon_client::ui_theme::motion::reduced_motion() {
@@ -1263,7 +1265,7 @@ impl Launcher {
         horizon_client::ui_theme::set_active_theme(glass);
         let result = self.draw_pages_with(&mut r, &gui);
         horizon_client::ui_theme::set_active_theme(saved_theme);
-        if result.is_ok() {
+        if result.is_ok() && self.anim.intro_done && !r.suspended {
             crate::android::first_frame_shown();
         }
         self.renderer = Some(r);
@@ -1333,6 +1335,27 @@ impl Launcher {
         if r.suspended {
             return Ok(());
         }
+        // Render a black native frame behind Android's video overlay. The platform
+        // removes the overlay only after both playback and this first frame finish.
+        if !self.anim.intro_done {
+            if !crate::android::intro_finished() {
+                self.targets.clear();
+                self.list_targets.clear();
+                let mut b = HudBatch::new([r.config.width, r.config.height]);
+                let mut ui = Ui::mobile(&gui.atlas, &mut b, (0.0, 0.0));
+                ui.fill(0.0, 0.0, ui.w, ui.h, color::hex(0x000000, 255));
+                ui.finish();
+                if r.render(&game::loading_frame(&b))? {
+                    crate::android::first_frame_shown();
+                }
+                return Ok(());
+            }
+            self.anim.intro_done = true;
+            self.anim.reveal_start = Some(std::time::Instant::now());
+            self.anim.trigger_page_transition();
+        }
+        let reveal = if horizon_client::ui_theme::motion::reduced_motion() { 1.0 }
+            else { self.anim.reveal_start.map_or(1.0, |t| (t.elapsed().as_secs_f32() / 1.6).min(1.0)) };
         custom_background_poll(&self.home);
         self.targets.clear();
         SLIDER_TRACK_TARGETS.with(|t| t.borrow_mut().clear());
@@ -1383,7 +1406,8 @@ impl Launcher {
         self.draw_scene_background(&mut ui, w, full_h);
 
         let account_name = self.login.profile.clone().unwrap_or_else(|| self.catalog.config.name.clone());
-        // Brand and account remain on the scene as the other tabs slide over it.
+        // Brand and account enter first, followed by the avatar and navigation.
+        ui.set_stagger_transition((reveal * 3.0).min(1.0), 0.0, 0.0);
         ui.rounded(12.0, 8.0, 198.0, 40.0, 20.0, my3_surface());
         ui.border(12.0, 8.0, 198.0, 40.0, 20.0, my3_border());
         ui.text(Face::SemiBold, 19.0, 24.0, 14.0, my3_text(), "V+");
@@ -1399,6 +1423,7 @@ impl Launcher {
         button(&mut ui, &mut self.targets, [w - 174.0, 12.0, 162.0, 34.0],
             "Background images", Action::OpenWallpapers, false);
 
+        ui.set_stagger_transition(1.0, 0.0, 0.0);
         let page = self.catalog.page;
         let target_shift = if page == Page::Play { 0.0 } else { 1.0 };
         if horizon_client::ui_theme::motion::reduced_motion() {
@@ -1408,10 +1433,13 @@ impl Launcher {
             self.anim.scene_shift += (target_shift - self.anim.scene_shift) * (dt * 10.0).min(1.0);
         }
         let t = self.anim.scene_shift;
-        let from = [w * 0.76 - 112.0, 55.0, 224.0, (h - 120.0).max(100.0)];
+        // The marked left corner, below the account badge and above controls.
+        let from = [12.0, 98.0, (w * 0.19).clamp(100.0, 200.0), (h - 180.0).max(90.0)];
         let to = [12.0, 98.0, (w * 0.23 - 18.0).clamp(100.0, 210.0), (h - 114.0).max(90.0)];
         let scene_rect = std::array::from_fn(|i| from[i] + (to[i] - from[i]) * t);
-        self.wardrobe.draw_scene(&mut ui, scene_rect);
+        if reveal >= 0.14 {
+            self.wardrobe.draw_scene(&mut ui, scene_rect);
+        }
 
         let nav_pages = [Page::Play, Page::Mods, Page::Packs, Page::Shaders,
             Page::Installed, Page::Skins, Page::Settings];
@@ -1425,12 +1453,16 @@ impl Launcher {
             || self.chooser.is_some() || self.login.visible || self.exit_confirmation;
         self.anim.step(page, self.catalog.settings_category,
             nav_x + selected_idx as f32 * nav_step, has_any_modal, self.catalog.sections);
+        ui.set_stagger_transition(((reveal - 0.16) * 4.0).clamp(0.0, 1.0), 0.0, 0.0);
         ui.rounded(nav_x, nav_y, nav_w, nav_h, 21.0, my3_surface());
         ui.stroke_rounded(nav_x, nav_y, nav_w, nav_h, 21.0, 1.0, my3_border());
         ui.rounded(self.anim.nav_pill_y + 3.0, nav_y + 3.0, nav_step - 6.0, nav_h - 6.0,
             18.0, my3_nav_active());
         for (i, item) in nav_pages.iter().enumerate() {
             let x = nav_x + i as f32 * nav_step;
+            let item_progress = ((reveal - 0.24 - i as f32 * 0.045) * 5.0).clamp(0.0, 1.0);
+            if item_progress <= 0.0 { continue; }
+            ui.set_stagger_transition(item_progress, x, nav_y);
             let selected = *item == page;
             let label = match item { Page::Packs => "Packs", _ => item.name() };
             let icon_x = x + if nav_step < 62.0 { (nav_step - 15.0) * 0.5 } else { 10.0 };
@@ -1443,6 +1475,7 @@ impl Launcher {
             self.targets.push(([x, nav_y, nav_step, nav_h], Action::Page(*item)));
         }
 
+        ui.set_stagger_transition(1.0, 0.0, 0.0);
         let content_x = (w * 0.25).max(176.0);
         let content_w = (w - content_x - 22.0).max(160.0);
         let compact = content_w < 430.0;
@@ -1451,7 +1484,8 @@ impl Launcher {
             ui.rounded(content_x - 12.0, 54.0, content_w + 22.0, (h - 58.0).max(100.0), 20.0, my3_surface());
             ui.stroke_rounded(content_x - 12.0, 54.0, content_w + 22.0, (h - 58.0).max(100.0), 20.0, 1.0, my3_border());
         }
-        ui.set_stagger_transition(self.anim.page_fade, content_x, 52.0);
+        let content_reveal = ((reveal - 0.38) / 0.62).clamp(0.0, 1.0);
+        ui.set_stagger_transition(self.anim.page_fade.min(content_reveal), 0.0, 52.0);
 
         // When any catalog item (Mod, Pack, Shader) is downloading/installing, take the entire
         // middle screen to show the MY3 downloading view with Speed, ETA, and Steps.
@@ -2407,30 +2441,10 @@ impl Launcher {
             );
         }
         crate::documents::draw_ui(&mut ui);
-        if !self.anim.intro_done {
-            let session_prog = if self.session_worker.is_some() {
-                0.30
-            } else {
-                0.55
-            };
-            let loading_progress = (0.45f32 + session_prog).clamp(0.0, 1.0);
-            if loading_progress >= 0.999 && self.anim.intro_elapsed >= 1.55 {
-                self.anim.intro_done = true;
-            } else {
-                let intro_status = if self.session_worker.is_some() {
-                    "Syncing account session & skins..."
-                } else if self.catalog.search_worker_active() {
-                    "Loading content catalog..."
-                } else {
-                    ""
-                };
-                ui.draw_horizon_intro(self.anim.intro_elapsed, loading_progress, intro_status);
-                if loading_progress >= 0.999 {
-                    self.targets.clear();
-                    self.list_targets.clear();
-                    self.targets.push(([0.0, 0.0, w, h], Action::SkipIntro));
-                }
-            }
+        // Do not activate controls before they have finished entering.
+        if reveal < 1.0 {
+            self.targets.clear();
+            self.list_targets.clear();
         }
         ui.finish();
 

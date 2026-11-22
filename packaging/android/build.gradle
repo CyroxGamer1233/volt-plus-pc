@@ -55,9 +55,10 @@ android {
         java.srcDirs = ['java']
         manifest.srcFile 'AndroidManifest.xml'
         jniLibs.srcDirs = ['../../.local/android/gradle-jni']
-        assets.srcDirs = ['../../.local/android/gradle-assets']
+        assets.srcDirs = ['../../.local/android/gradle-assets', 'media']
         res.srcDirs = ['res']
     }
+    androidResources { noCompress += ['mp4'] }
     packaging { jniLibs { useLegacyPackaging = true; keepDebugSymbols += '**/*.so' } }
 }
 layout.buildDirectory = file('../../.local/android/gradle-build')

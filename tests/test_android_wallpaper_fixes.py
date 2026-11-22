@@ -8,11 +8,11 @@ class WallpaperFixTests(unittest.TestCase):
     def read(self, path):
         return (ROOT / path).read_text(encoding="utf-8")
 
-    def test_character_uses_right_side_and_high_resolution_cached_preview(self):
+    def test_character_uses_left_side_and_high_resolution_cached_preview(self):
         page = self.read("crates/horizon-client/src/android/launcher_pages.rs")
         wardrobe = self.read("crates/horizon-client/src/android/wardrobe.rs")
         ui = self.read("crates/horizon-client/src/ui_theme.rs")
-        self.assertIn("w * 0.76 - 112.0", page)
+        self.assertIn("let from = [12.0, 98.0", page)
         self.assertIn("[384, 480]", wardrobe)
         self.assertIn("ui.scene_avatar(", wardrobe)
         self.assertIn("self.avatar_revision != Some(revision)", ui)

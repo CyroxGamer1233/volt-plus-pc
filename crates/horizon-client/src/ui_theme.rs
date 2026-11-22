@@ -1141,7 +1141,7 @@ impl<'a> Ui<'a> {
         let delay = ((rel_y / 520.0) * 0.34 + (rel_x / 920.0) * 0.10).clamp(0.0, 0.42);
         let local_t = ((self.page_anim - delay) / (1.0 - delay).max(0.25)).clamp(0.0, 1.0);
         let dy = (1.0 - motion::spring_expressive_default(local_t)) * 14.0;
-        let alpha = (0.16 + 0.84 * motion::spring_expressive_effects(local_t)).clamp(0.0, 1.0);
+        let alpha = motion::spring_expressive_effects(local_t).clamp(0.0, 1.0);
         (dy, alpha)
     }
     /// Native phone DPI-adaptive launcher density; game HUD scale is untouched.

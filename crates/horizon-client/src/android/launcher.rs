@@ -1078,7 +1078,7 @@ impl ApplicationHandler for Launcher {
                         && !horizon_client::ui_theme::motion::reduced_motion()
                         && !horizon_client::ui_theme::motion::launcher_animations_disabled()
                 })
-                || (self.catalog.page == Page::Skins && self.wardrobe.is_animating())
+                || self.wardrobe.is_animating()
                 || self
                     .feedback
                     .is_some_and(|(_, t)| t.elapsed() < Duration::from_millis(280))
