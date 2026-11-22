@@ -3791,7 +3791,7 @@ impl Launcher {
             title_x,
             head_y + 2.0,
             my3_text(),
-            "Horizon Android Update",
+            "Volt Plus Update",
         );
         let badge_text = format!("v1.0.0  →  v{}", info.version);
         let badge_w = ui.measure(Face::SemiBold, 11.0, &badge_text) + 16.0;
@@ -6891,13 +6891,13 @@ impl Launcher {
             Some(Action::GameFiles) => {
                 self.catalog.status = if crate::platform::open_documents(crate::document_store::ROOT) {
                     "Game files opened. Worlds, mods, packs, shaders and reports are available here."
-                } else { "Open system Files > Horizon Android." }.into();
+                } else { "Open system Files > Volt Plus." }.into();
             }
             Some(Action::WorldFiles) => {
                 let id = crate::document_store::folder_id(self.catalog.config.profile, "worlds");
                 self.catalog.status = if crate::platform::open_documents(&id) {
                     "Copy a complete world folder to back up or import. Finish copying before Play; never replace an existing world silently."
-                } else { "Open system Files > Horizon Android > Worlds. Copy complete world folders while the game is closed." }.into();
+                } else { "Open system Files > Volt Plus > Worlds. Copy complete world folders while the game is closed." }.into();
             }
             Some(Action::WorkerLimit) => self.open_chooser(chooser::Kind::WorkerLimit),
             Some(Action::ChooseWorkerLimit(limit)) => {
@@ -7394,7 +7394,7 @@ impl Launcher {
                 self.catalog.status = if crate::platform::open_documents("reports") {
                     "Opened Reports folder in system Files.".into()
                 } else {
-                    "Reports are saved under Horizon Android > Reports.".into()
+                    "Reports are saved under Volt Plus > Reports.".into()
                 };
             }
             Some(Action::ToggleLauncherAnimations) => {

@@ -108,6 +108,11 @@ public final class ScreenRecorder {
         if (RecorderService.busy()) {
             return "recording;already recording";
         }
+        if ("asking".equals(state)) {
+            // A second tap must not stack prompts: the first one's answer would arrive
+            // as a cancel and look like a refusal.
+            return "asking;the screen capture prompt is already open";
+        }
         android.content.Context context = activity.getApplicationContext();
         if (audio < 0 || audio > 2) {
             audio = 0;
@@ -171,11 +176,21 @@ public final class ScreenRecorder {
         }
         if (result != android.app.Activity.RESULT_OK || data == null) {
             state = "denied";
-            message = "screen capture was not allowed";
+            message =
+                    "screen capture was not allowed (result "
+                            + result
+                            + (data == null ? ", no session" : "")
+                            + " from "
+                            + (activity == null ? "no activity" : activity.getClass().getSimpleName())
+                            + ")";
+            android.util.Log.w(
+                    "VoltRecorder",
+                    "consent result " + result + " data=" + (data != null) + " request=" + request);
             return;
         }
         consentResult = result;
         consentData = data;
+        android.util.Log.w("VoltRecorder", "consent granted, starting the capture service");
         state = "starting";
         message = "";
         try {

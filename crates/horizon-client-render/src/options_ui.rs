@@ -3845,9 +3845,32 @@ impl OptionsUi {
                 });
             }
             match &wd.kind {
-                WKind::Button { label, active, .. } => {
+                WKind::Button { label, active, act } => {
                     let label = fitted.as_ref().map_or(label, |f| &f.0);
-                    ui::button(batch, atlas, wd.x, wd.y, wd.w, wd.h, label, *active, hover);
+                    if *act == Act::Done {
+                        // Volt Plus: the reference layout's one big action is a flat
+                        // copper plate rather than a vanilla sprite.
+                        let plate = if !*active {
+                            crate::hud::rgb(horizon_theme::warm::BORDER, 230)
+                        } else if hover {
+                            crate::hud::rgb(horizon_theme::warm::ACCENT_HI, 255)
+                        } else {
+                            crate::hud::rgb(horizon_theme::warm::ACCENT, 255)
+                        };
+                        batch.fill(atlas, wd.x, wd.y, wd.w, wd.h, plate);
+                        batch.fill(atlas, wd.x, wd.y, wd.w, 1.0, crate::hud::rgb(horizon_theme::warm::ACCENT_HI, 255));
+                        ui::centered_text(
+                            batch,
+                            atlas,
+                            label,
+                            wd.x + 2.0,
+                            wd.y + 6.0,
+                            wd.w - 4.0,
+                            crate::hud::rgb(horizon_theme::warm::ON_ACCENT, 255),
+                        );
+                    } else {
+                        ui::button(batch, atlas, wd.x, wd.y, wd.w, wd.h, label, *active, hover);
+                    }
                     crate::widgets::last_narratable(|n| {
                         narrate_widget(n, s, wd, hover, list_key, framebuffer);
                     });
