@@ -15,6 +15,7 @@ class ZalithEventsTest {
         val unsupported = mutableListOf<Pair<String, String>>()
         var keyboard = 0
         var menu = 0
+        var controls = 0
         var text: String? = null
         var resets = 0
         override fun input(type: String, key: String, pressed: Boolean): Boolean {
@@ -23,6 +24,7 @@ class ZalithEventsTest {
         }
         override fun toggleKeyboard() { keyboard++ }
         override fun toggleMenu() { menu++ }
+        override fun toggleControls() { controls++ }
         override fun sendText(text: String) { this.text = text }
         override fun reset() { resets++ }
         override fun unsupported(type: String, key: String) { unsupported.add(type to key) }
@@ -71,6 +73,21 @@ class ZalithEventsTest {
         toggle.onReleaseEvent(events.handler, layers)
         assertTrue(layers.drop(1).all { it.hide })
         events.dispose()
+    }
+
+    @Test fun pojavActionsKeepHostAndInputOperationsSeparate() {
+        val sink = Sink(); val events = dev.horizon.android.control.PojavEvents(sink)
+        events.accept(0, true) // Pojav GLFW_KEY_UNKNOWN slot
+        events.accept(-1, true); events.accept(-1, false)
+        events.accept(-2, true); events.accept(-2, false)
+        events.accept(-9, true); events.accept(-9, false)
+        assertEquals(1, sink.keyboard); assertEquals(1, sink.controls); assertEquals(1, sink.menu)
+        assertTrue(sink.edges.isEmpty())
+        events.accept(87, true); events.accept(87, false)
+        events.accept(-7, true); events.accept(-7, false)
+        assertEquals(listOf(Triple("pojav", "87", true), Triple("pojav", "87", false),
+            Triple("pojav", "-7", true), Triple("pojav", "-7", false)), sink.edges)
+        events.dispose(); assertEquals(1, sink.resets)
     }
 
     @Test fun heldScrollRepeatsAndStopsOnLastReleaseOrDispose() {

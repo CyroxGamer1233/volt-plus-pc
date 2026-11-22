@@ -8,6 +8,7 @@ interface ControlInputSink {
     /** Returns false when a particular input is unsupported. */
     fun input(type: String, key: String, pressed: Boolean): Boolean
     fun toggleKeyboard()
+    fun toggleControls()
     fun toggleMenu()
     fun sendText(text: String)
     fun reset()

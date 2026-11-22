@@ -31,7 +31,7 @@ jobs:
           results = list(Path('layer/build/test-results/testDebugUnitTest').glob('TEST-*.xml'))
           suites = [ET.parse(p).getroot() for p in results]
           tests = sum(int(s.get('tests', '0')) for s in suites)
-          if tests < 5:
+          if tests < 6:
               raise SystemExit(f'Original layout fixture tests did not run: {tests}')
           print(f'::notice::Original Zalith fixture tests executed: {tests}')
           results = list(Path('pojav/build/test-results/testDebugUnitTest').glob('TEST-*.xml'))
