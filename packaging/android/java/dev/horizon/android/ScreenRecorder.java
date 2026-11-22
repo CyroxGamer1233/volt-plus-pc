@@ -116,9 +116,20 @@ public final class ScreenRecorder {
                     (android.media.projection.MediaProjectionManager)
                             context.getSystemService(
                                     android.content.Context.MEDIA_PROJECTION_SERVICE);
-            android.content.Intent intent = manager.createScreenCaptureIntent();
+            final android.content.Intent intent = manager.createScreenCaptureIntent();
             state = "asking";
-            activity.startActivityForResult(intent, REQUEST_CONSENT);
+            // The game's event loop is not the UI thread; the prompt has to open on it.
+            activity.runOnUiThread(
+                    new Runnable() {
+                        public void run() {
+                            try {
+                                activity.startActivityForResult(intent, REQUEST_CONSENT);
+                            } catch (Throwable error) {
+                                state = "error";
+                                message = shorter(error);
+                            }
+                        }
+                    });
             return "asking;confirm the screen capture prompt";
         } catch (Throwable error) {
             state = "error";
@@ -279,10 +290,20 @@ public final class ScreenRecorder {
             return "error;nothing to play";
         }
         try {
-            android.content.Intent view = new android.content.Intent(android.content.Intent.ACTION_VIEW);
+            final android.content.Intent view =
+                    new android.content.Intent(android.content.Intent.ACTION_VIEW);
             view.setDataAndType(android.net.Uri.parse(item), "video/mp4");
             view.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            activity.startActivity(view);
+            activity.runOnUiThread(
+                    new Runnable() {
+                        public void run() {
+                            try {
+                                activity.startActivity(view);
+                            } catch (Throwable error) {
+                                message = shorter(error);
+                            }
+                        }
+                    });
             return "ok;";
         } catch (Throwable error) {
             return "error;no video player could open it (" + shorter(error) + ")";
