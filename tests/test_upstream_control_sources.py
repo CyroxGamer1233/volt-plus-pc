@@ -10,6 +10,8 @@ class UpstreamControlSources(unittest.TestCase):
     def test_sources_match_pinned_checksums(self):
         manifest = json.loads((ROOT / 'tools/upstream_control_sources.json').read_text())
         self.assertGreater(len(manifest['files']), 100)
+        actual = {str(p.relative_to(ROOT)) for root in ('third_party/pojav-control-engine', 'third_party/zalith-control-engine') for p in (ROOT / root).rglob('*') if p.is_file()}
+        self.assertEqual(actual, set(manifest['files']))
         for path, digest in manifest['files'].items():
             self.assertEqual(hashlib.sha256((ROOT / path).read_bytes()).hexdigest(), digest, path)
 
@@ -23,9 +25,6 @@ class UpstreamControlSources(unittest.TestCase):
         self.assertTrue(module.prohibited('third_party/pojav-control-engine/src/customcontrols/RecoveredGame.java'))
         self.assertTrue(module.prohibited('third_party/zalith-control-engine/InputMap/RecoveredGame.java'))
         self.assertTrue(module.prohibited('third_party/pojav-control-engine/src/customcontrols/Injected.class'))
-
-if __name__ == '__main__':
-    unittest.main()
 
 class InputTranslationCoverage(unittest.TestCase):
     def test_known_glfw_codes_match_available_tokens(self):
@@ -50,3 +49,6 @@ class InputTranslationCoverage(unittest.TestCase):
             self.assertIn(name, bridge)
         self.assertIn('release_all', bridge)
         self.assertIn('return None', bridge)
+
+if __name__ == '__main__':
+    unittest.main()

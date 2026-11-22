@@ -131,6 +131,8 @@ pub enum ControlEvent {
     ToggleKeyboard,
     ToggleControls,
     OpenMenu,
+    ScrollUpHeld,
+    ScrollDownHeld,
     LayerSwitch,
     LayerShow,
     LayerHide,
@@ -172,6 +174,11 @@ pub fn zalith_event(kind: &str, key: &str) -> Option<ControlEvent> {
             "GLFW_MOUSE_BUTTON_RIGHT" => ControlEvent::Token("key.mouse.right"),
             "GLFW_MOUSE_BUTTON_MIDDLE" => ControlEvent::Token("key.mouse.middle"),
             "launcher.event.switch_ime" => ControlEvent::ToggleKeyboard,
+            "launcher.event.switch_menu" => ControlEvent::OpenMenu,
+            "launcher.event.scroll_up" => ControlEvent::ScrollUpHeld,
+            "launcher.event.scroll_down" => ControlEvent::ScrollDownHeld,
+            "launcher.event.scroll_up.single" => ControlEvent::Token("mouse.scroll.up"),
+            "launcher.event.scroll_down.single" => ControlEvent::Token("mouse.scroll.down"),
             _ => return None,
         }),
         _ => None,
@@ -233,6 +240,8 @@ mod tests {
         assert_eq!(pojav_code(-3), Some(ControlEvent::Token("key.mouse.left")));
         assert_eq!(pojav_code(87), Some(ControlEvent::Token("key.keyboard.w")));
         assert_eq!(zalith_event("switch_layer", "layer-id"), Some(ControlEvent::LayerSwitch));
+        assert_eq!(zalith_event("launcher_event", "launcher.event.scroll_up"), Some(ControlEvent::ScrollUpHeld));
+        assert_eq!(zalith_event("launcher_event", "launcher.event.scroll_up.single"), Some(ControlEvent::Token("mouse.scroll.up")));
         assert_eq!(zalith_event("launcher_event", "unimplemented"), None);
     }
     #[test]
