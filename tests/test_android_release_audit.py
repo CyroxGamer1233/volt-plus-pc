@@ -21,6 +21,14 @@ def archive(files):
 
 
 class ReleaseAuditTests(unittest.TestCase):
+    def test_volt_plus_is_the_standard_package(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            apk = Path(temporary) / 'test.apk'
+            apk.write_bytes(b'test')
+            with patch.object(audit, 'inspect_payload', return_value={'findings': []}), patch.object(
+                    audit.subprocess, 'check_output', return_value="package: name='vp.net.voltplus'\n"):
+                self.assertTrue(audit.audit(apk, 'aapt2')['passed'])
+
     def test_dev_package_does_not_relax_stable_identity_or_debuggable_check(self):
         with tempfile.TemporaryDirectory() as temporary:
             apk = Path(temporary) / 'test.apk'
@@ -70,6 +78,14 @@ class ReleaseAuditTests(unittest.TestCase):
 
     def test_androidx_build_profiles_are_allowed(self):
         self.assertEqual(self.inspect(extra={'assets/dexopt/baseline.prof': b'compiled profile'})['findings'], [])
+
+    def test_only_the_original_intro_video_is_allowed(self):
+        original = (Path(__file__).resolve().parents[1] / 'packaging/android/media/intro.mp4').read_bytes()
+        self.assertEqual(self.inspect(extra={'assets/intro.mp4': original})['findings'], [])
+        report = self.inspect(extra={'assets/intro.mp4': b'not the original'})
+        self.assertIn('intro_checksum', {f['kind'] for f in report['findings']})
+        report = self.inspect(extra={'assets/another.mp4': original})
+        self.assertIn('unexpected_asset', {f['kind'] for f in report['findings']})
 
     def test_nested_player_data_and_unexpected_asset_are_rejected(self):
         report = self.inspect({'profiles/account.json': b'{}'}, {'assets/settings.json': b'{}'})

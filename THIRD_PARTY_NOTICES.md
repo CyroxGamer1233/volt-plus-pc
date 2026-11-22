@@ -84,3 +84,32 @@ copyright 2026 d3grando, MIT. Exact revisions and adaptation notes are recorded 
 module retains its full MIT LICENSE. Changes provide static Android hook
 adapters, opt-in configuration, profile-state reset and compatibility guards.
 These are a fixed compiled set, not support for loading arbitrary native mods.
+
+## PojavLauncher controls (source staging only)
+
+`third_party/pojav-control-engine/src/customcontrols` contains the original
+custom-controls source from [PojavLauncher](https://github.com/PojavLauncherTeam/PojavLauncher)
+at revision `b12ad048157b3aa255d078c235dd4571e1900309`. Upstream is licensed
+under LGPL-3.0; see `third_party/pojav-control-engine/LICENSE.LGPL-3.0` and
+`LICENSE.GPL-3.0`. These files are **not compiled into the APK yet** and depend
+on upstream Android resources and launcher input bridges not included here.
+
+## PojavLauncher exp4j fork (source staging only)
+
+`third_party/pojav-control-engine/exp4j` contains the PojavLauncherTeam fork of
+[exp4j](https://github.com/PojavLauncherTeam/exp4j) at commit
+`60eaec6f78a530e655570adf61dc6ee41453176d`, under Apache-2.0; its license is
+included there. The standalone Pojav converter probe builds it from source; it
+is **not compiled into the APK yet**. The original Pojav controls depend on
+this fork's expression API, which is absent from the standard 0.4.8 release.
+
+## Zalith Launcher 2 LayerController (source staging only)
+
+`third_party/zalith-control-engine/LayerController` and `InputMap` contain source
+from [ZalithLauncher2](https://github.com/ZalithLauncher/ZalithLauncher2) at
+revision `2ab10a57a5593c62eae48c30e98e54d6016072be`, under GPL-3.0-or-later;
+see `third_party/zalith-control-engine/LICENSE.GPL-3.0` and source headers.
+These files are **not compiled into the APK yet**. They use Kotlin, Jetpack
+Compose, Android lifecycle and serialization, and require an input adapter.
+Before distributing a build that includes them, review and satisfy applicable
+license obligations, including notices and corresponding source availability.

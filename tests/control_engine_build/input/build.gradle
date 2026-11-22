@@ -1,0 +1,18 @@
+plugins {
+    id 'com.android.library'
+    id 'org.jetbrains.kotlin.android'
+}
+android {
+    namespace 'com.movtery.inputmap'
+    compileSdk 35
+    defaultConfig { minSdk 28 }
+    sourceSets.main {
+        java.srcDirs = ['../../../third_party/zalith-control-engine/InputMap/src/main/java']
+        manifest.srcFile '../../../third_party/zalith-control-engine/InputMap/src/main/AndroidManifest.xml'
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+}
+kotlin { jvmToolchain(17) }
+dependencies {
+    implementation 'androidx.annotation:annotation:1.9.1'
+}

@@ -17,6 +17,9 @@ ASSETS = {'assets/engine-data.zip', 'assets/bedrock-controls.zip'}
 # AndroidX build-time optimization profiles, not player/account profiles.
 BUILD_ASSETS = {'assets/dexopt/baseline.prof', 'assets/dexopt/baseline.profm'}
 LICENSE_ASSETS = {'assets/LICENSE.txt', 'assets/THIRD_PARTY_NOTICES.md'}
+# The user-provided intro is the only additional media allowed in a release APK.
+INTRO_ASSET = 'assets/intro.mp4'
+INTRO_SHA256 = '7917a156073ebf9b6534881764eb350e7b51f9929d61416d8d758868c722cccd'
 PRIVATE_PARTS = {'accounts', 'accounts.json', 'session.json', 'session-file.json',
                  'control.json', 'servers.dat', 'level.dat', 'options.txt',
                  'android-launch.json', 'android-launcher.json', 'saves', 'profiles',
@@ -58,9 +61,11 @@ def inspect_payload(path, public=False):
                 raise ValueError('APK exceeds audit decompression limits')
             if any(part.lower() in PRIVATE_PARTS for part in parts) or PurePosixPath(name).suffix.lower() in PRIVATE_SUFFIXES:
                 findings.append({'path': full, 'kind': 'private_file'})
-            if depth == 0 and name.startswith('assets/') and name not in ASSETS | BUILD_ASSETS | LICENSE_ASSETS:
+            if depth == 0 and name.startswith('assets/') and name not in ASSETS | BUILD_ASSETS | LICENSE_ASSETS | {INTRO_ASSET}:
                 findings.append({'path': full, 'kind': 'unexpected_asset'})
             data = archive.read(entry)
+            if depth == 0 and name == INTRO_ASSET and hashlib.sha256(data).hexdigest() != INTRO_SHA256:
+                findings.append({'path': full, 'kind': 'intro_checksum'})
             for kind, pattern in PATTERNS.items():
                 if pattern.search(data):
                     findings.append({'path': full, 'kind': kind})
@@ -83,7 +88,7 @@ def inspect_payload(path, public=False):
     return {**totals, 'findings': findings}
 
 
-def audit(path, aapt2, public=False, app_id='com.goydevv.horizon'):
+def audit(path, aapt2, public=False, app_id='vp.net.voltplus'):
     report = inspect_payload(path, public)
     badging = subprocess.check_output([str(aapt2), 'dump', 'badging', str(path)], text=True)
     if f"package: name='{app_id}'" not in badging:
@@ -107,7 +112,7 @@ def main():
     parser.add_argument('--aapt2', required=True, type=Path)
     parser.add_argument('--report', type=Path)
     parser.add_argument('--public', action='store_true')
-    parser.add_argument('--app-id', choices=['com.goydevv.horizon', 'com.goydevv.horizon.dev', 'dev.horizon.android', 'dev.horizon.android.dev'], default='com.goydevv.horizon')
+    parser.add_argument('--app-id', choices=['vp.net.voltplus', 'com.goydevv.horizon', 'com.goydevv.horizon.dev', 'dev.horizon.android', 'dev.horizon.android.dev'], default='vp.net.voltplus')
     args = parser.parse_args()
     report = audit(args.apk, args.aapt2, args.public, args.app_id)
     if args.report:

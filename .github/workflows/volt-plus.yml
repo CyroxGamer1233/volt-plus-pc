@@ -1,0 +1,176 @@
+name: Volt Plus APK
+run-name: Volt Plus · ${{ github.sha }}
+
+on:
+  push:
+    branches: [android, arena/e973ac10-volt-plus]
+  workflow_dispatch:
+    inputs:
+      all_abis:
+        description: Also build ARMv7, x86 and x86_64
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+concurrency:
+  group: volt-plus-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # Only trusted branches can use the permanent signing identity; never PRs.
+    if: (github.ref == 'refs/heads/android' || github.ref == 'refs/heads/arena/e973ac10-volt-plus') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: ${{ fromJSON(inputs.all_abis && '["arm64-v8a","armeabi-v7a","x86","x86_64"]' || '["arm64-v8a"]') }}
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.local/ci-target
+      HORIZON_TELEMETRY_URL: 'off'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          persist-credentials: false
+      - name: Restore the CI signing identity
+        env:
+          RELEASE_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          python3 - <<'PY'
+          import base64, os
+          from pathlib import Path
+          # GitHub secrets may include line breaks from copied base64 output.
+          value = ''.join(os.environ.get('RELEASE_KEYSTORE', '').split())
+          password = os.environ.get('RELEASE_KEYSTORE_PASSWORD', '')
+          alias = os.environ.get('RELEASE_KEY_ALIAS', '')
+          key_password = os.environ.get('RELEASE_KEY_PASSWORD', '') or password
+          missing = [name for name, item in (
+              ('ANDROID_KEYSTORE_BASE64', value), ('ANDROID_KEYSTORE_PASSWORD', password),
+              ('ANDROID_KEY_ALIAS', alias)) if not item]
+          if missing:
+              for name in missing:
+                  print(f'::error::Missing required Actions secret: {name}', flush=True)
+              raise SystemExit(1)
+          try:
+              decoded = base64.b64decode(value, validate=True)
+          except (ValueError, base64.binascii.Error):
+              print('::error::ANDROID_KEYSTORE_BASE64 is not valid base64; copy only the encoded keystore', flush=True)
+              raise SystemExit(1)
+          path = Path('.local/android/ci.keystore')
+          path.parent.mkdir(parents=True, exist_ok=True)
+          path.write_bytes(decoded)
+          path.chmod(0o600)
+          # Gradle resolves a relative storeFile against packaging/android, so pass an
+          # absolute path and the credentials that belong to this keystore.
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as env:
+              env.write(f'HORIZON_ANDROID_KEYSTORE={path.resolve()}\n')
+              env.write(f'HORIZON_ANDROID_KEYSTORE_PASSWORD={password}\n')
+              env.write(f'HORIZON_ANDROID_KEY_ALIAS={alias}\n')
+              env.write(f'HORIZON_ANDROID_KEY_PASSWORD={key_password}\n')
+          PY
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        with:
+          gradle-version: '8.14'
+      - name: Install Android toolchain
+        env:
+          ABI: ${{ matrix.abi }}
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [[ ! -x "$sdkmanager" ]]; then
+            sdkmanager=$(find "$ANDROID_HOME/cmdline-tools" -type f -path '*/bin/sdkmanager' | sort -V | tail -n 1)
+          fi
+          test -x "$sdkmanager"
+          "$sdkmanager" --sdk_root="$ANDROID_HOME" 'platforms;android-35' 'build-tools;35.0.0' 'ndk;28.2.13676358'
+          rustup show
+          case "$ABI" in
+            arm64-v8a) target=aarch64-linux-android ;;
+            armeabi-v7a) target=armv7-linux-androideabi ;;
+            x86) target=i686-linux-android ;;
+            x86_64) target=x86_64-linux-android ;;
+          esac
+          rustup target add "$target"
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .local/ci-target
+          key: android-dev-${{ runner.os }}-${{ matrix.abi }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'packaging/android/build.gradle') }}-${{ github.sha }}
+          restore-keys: |
+            android-dev-${{ runner.os }}-${{ matrix.abi }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'packaging/android/build.gradle') }}-
+      - name: Check public source and packaging boundaries
+        run: |
+          python3 tools/check_public_tree.py
+          python3 -m unittest discover -s tests -p 'test_android_release_audit.py'
+      - name: Prepare private engine inputs from official downloads
+        run: python3 tools/android_prepare.py --java-home "$JAVA_HOME"
+      - name: Build optimized public Volt Plus APK
+        env:
+          ABI: ${{ matrix.abi }}
+        run: |
+          set -o pipefail
+          python3 tools/android_build.py --abi "$ABI" --public --profile release \
+            --sdk "$ANDROID_HOME" --java-home "${JAVA_HOME_17_X64:-$JAVA_HOME}" --gradle "$(command -v gradle)" \
+            --ndk-version 28.2.13676358 --build-tools-version 35.0.0 \
+            --release-version-code "$((2026112100 + GITHUB_RUN_NUMBER))" 2>&1 | tee "$RUNNER_TEMP/volt-build.log"
+      - name: Summarize compiler errors without credentials
+        if: failure()
+        run: |
+          python3 - <<'PY'
+          import os, re
+          from pathlib import Path
+          path = Path(os.environ['RUNNER_TEMP']) / 'volt-build.log'
+          if path.exists():
+              lines = path.read_text(errors='replace').splitlines()
+              # Never emit credentials, even if a tool accidentally writes one.
+              sensitive = [v for k, v in os.environ.items() if v and ('PASSWORD' in k or 'TOKEN' in k or 'KEYSTORE' in k or k.endswith('_KEY'))]
+              for line in lines[-40:]:
+                  line = re.sub(r'\x1b\[[0-9;]*m', '', line)
+                  for value in sensitive:
+                      line = line.replace(value, '[redacted]')
+                  line = re.sub(r'[A-Za-z0-9+/]{120,}={0,2}', '[redacted]', line)
+                  print('::notice::' + line[:450].replace('%', '%25'))
+          PY
+      - name: Collect only audited APK and public metadata
+        env:
+          ABI: ${{ matrix.abi }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, shutil
+          from pathlib import Path
+          out = Path('dist')
+          out.mkdir()
+          sha, abi = os.environ['GITHUB_SHA'], os.environ['ABI']
+          name = f'Volt-Plus.{os.environ["GITHUB_RUN_NUMBER"]}.{sha[:12]}-{abi}.apk'
+          apk = out / name
+          shutil.copyfile(Path('.local/android/apk') / abi / 'horizon-android-public.apk', apk)
+          (out / 'SHA256SUMS.txt').write_text(f'{hashlib.sha256(apk.read_bytes()).hexdigest()}  {name}\n')
+          for source, dest in [('LICENSE', 'LICENSE.txt'), ('THIRD_PARTY_NOTICES.md', 'THIRD_PARTY_NOTICES.md')]:
+              shutil.copyfile(source, out / dest)
+          (out / 'BUILD.json').write_text(json.dumps({'commit': sha, 'abi': abi, 'profile': 'release',
+              'package': 'vp.net.voltplus', 'experimental': True,
+              'run': f'https://github.com/{os.environ["GITHUB_REPOSITORY"]}/actions/runs/{os.environ["GITHUB_RUN_ID"]}'}, indent=2) + '\n')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write(f'### Volt Plus APK: {abi}\n\nCommit: `{sha}`. Optimized release profile; experimental build.\n\n'
+                  'Download the APK artifact below. In-place updates require the same application ID, signing certificate and a lower installed version code.\n')
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: volt-plus-${{ github.run_number }}-${{ matrix.abi }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Remove signing key
+        if: always()
+        run: rm -f .local/android/ci.keystore .local/android/debug.keystore

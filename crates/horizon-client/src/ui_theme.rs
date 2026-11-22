@@ -205,6 +205,8 @@ struct Cache {
     images: HashMap<String, Rect>,
     shelf: (u32, u32, u32),
     image_shelf: (u32, u32, u32),
+    scene: Option<Rect>,
+    avatar_revision: Option<u64>,
     pending: Vec<crate::font::Patch>,
     glyph_scratch: Vec<(f32, f32, Rect)>,
     /// The atlas the entries were uploaded to (a new atlas starts over).
@@ -227,6 +229,8 @@ fn with_cache<R>(atlas: &HudAtlas, f: impl FnOnce(&mut Cache) -> R) -> R {
             images: HashMap::with_capacity(64),
             shelf: (0, 0, 0),
             image_shelf: (0, 320, 0),
+            scene: None,
+            avatar_revision: None,
             pending: Vec::with_capacity(64),
             glyph_scratch: Vec::with_capacity(128),
             atlas: id,
@@ -237,6 +241,8 @@ fn with_cache<R>(atlas: &HudAtlas, f: impl FnOnce(&mut Cache) -> R) -> R {
             cache.images.clear();
             cache.shelf = (0, 0, 0);
             cache.image_shelf = (0, 320, 0);
+            cache.scene = None;
+            cache.avatar_revision = None;
             cache.pending.clear();
         }
         f(cache)
@@ -774,7 +780,8 @@ impl Cache {
     fn place_image(&mut self, atlas: &HudAtlas, w: u32, h: u32) -> Option<(u32, u32, Rect)> {
         let region = Self::region(atlas)?;
         let band_top = 320u32.min(region.h.saturating_sub(64));
-        let band_bottom = region.h;
+        // The lower half is reserved for the launcher landscape.
+        let band_bottom = region.h.min(512);
         if w > region.w || band_top + h > band_bottom {
             return None;
         }
@@ -818,6 +825,35 @@ impl Cache {
             w,
             h,
         })
+    }
+    // A fixed, non-evicting slot below the thumbnail shelf prevents catalog icon
+    // churn from overwriting the scene while a frame is being composed.
+    fn scene(&mut self, atlas: &HudAtlas, w: u32, h: u32, rgba: &[u8]) -> Option<Rect> {
+        if let Some(rect) = self.scene { return Some(rect); }
+        let region = Self::region(atlas)?;
+        if w == 0 || h == 0 || w > 896 || w > region.w || 512 + h > region.h
+            || rgba.len() != (w * h * 4) as usize { return None; }
+        let ax = (region.u0 * atlas.width as f32).round() as u32;
+        let ay = (region.v0 * atlas.height as f32).round() as u32 + 512;
+        self.pending.push(crate::font::Patch { x: ax, y: ay, width: w, height: h, rgba: rgba.to_vec() });
+        let rect = Rect { u0: ax as f32 / atlas.width as f32, v0: ay as f32 / atlas.height as f32,
+            u1: (ax + w) as f32 / atlas.width as f32, v1: (ay + h) as f32 / atlas.height as f32, w, h };
+        self.scene = Some(rect);
+        Some(rect)
+    }
+    // Separate fixed slot beside the landscape; only upload when the camera or skin changes.
+    fn scene_avatar(&mut self, atlas: &HudAtlas, w: u32, h: u32, rgba: &[u8], revision: u64) -> Option<Rect> {
+        let region = Self::region(atlas)?;
+        if w == 0 || h == 0 || 900 + w > region.w || 512 + h > region.h
+            || rgba.len() != (w as usize * h as usize * 4) { return None; }
+        let ax = (region.u0 * atlas.width as f32).round() as u32 + 900;
+        let ay = (region.v0 * atlas.height as f32).round() as u32 + 512;
+        if self.avatar_revision != Some(revision) {
+            self.pending.push(crate::font::Patch { x: ax, y: ay, width: w, height: h, rgba: rgba.to_vec() });
+            self.avatar_revision = Some(revision);
+        }
+        Some(Rect { u0: ax as f32 / atlas.width as f32, v0: ay as f32 / atlas.height as f32,
+            u1: (ax + w) as f32 / atlas.width as f32, v1: (ay + h) as f32 / atlas.height as f32, w, h })
     }
     fn upload(&mut self, atlas: &HudAtlas, w: u32, h: u32, alpha: &[f32]) -> Option<Rect> {
         let rgba: Vec<u8> = alpha
@@ -1105,7 +1141,7 @@ impl<'a> Ui<'a> {
         let delay = ((rel_y / 520.0) * 0.34 + (rel_x / 920.0) * 0.10).clamp(0.0, 0.42);
         let local_t = ((self.page_anim - delay) / (1.0 - delay).max(0.25)).clamp(0.0, 1.0);
         let dy = (1.0 - motion::spring_expressive_default(local_t)) * 14.0;
-        let alpha = (0.16 + 0.84 * motion::spring_expressive_effects(local_t)).clamp(0.0, 1.0);
+        let alpha = motion::spring_expressive_effects(local_t).clamp(0.0, 1.0);
         (dy, alpha)
     }
     /// Native phone DPI-adaptive launcher density; game HUD scale is untouched.
@@ -2137,6 +2173,40 @@ impl<'a> Ui<'a> {
             color::with_alpha(theme.text_primary, alpha),
             &fitted,
         );
+    }
+
+    /// Draw the launcher's uncropped landscape from a reserved atlas slot.
+    #[allow(clippy::too_many_arguments)]
+    pub fn scene_image(&mut self, w: u32, h: u32, rgba: &[u8], x: f32, y: f32, dw: f32, dh: f32) -> bool {
+        let atlas = self.atlas;
+        let Some(rect) = with_cache(atlas, |c| c.scene(atlas, w, h, rgba)) else { return false; };
+        let (x0, y0, x1, y1) = (self.px_x(x), self.px_y(y), self.px_x(x + dw), self.px_y(y + dh));
+        self.emit_clipped_uv(x0, y0, x1, y1, rect.u0, rect.v0, rect.u1, rect.v1, u32::MAX);
+        true
+    }
+
+    /// Draw the high-resolution rotating character from its dedicated atlas slot.
+    #[allow(clippy::too_many_arguments)]
+    pub fn scene_avatar(&mut self, w: u32, h: u32, rgba: &[u8], revision: u64,
+        x: f32, y: f32, dw: f32, dh: f32) -> bool {
+        let atlas = self.atlas;
+        let Some(rect) = with_cache(atlas, |c| c.scene_avatar(atlas, w, h, rgba, revision)) else { return false; };
+        let (x0, y0, x1, y1) = (self.px_x(x), self.px_y(y), self.px_x(x + dw), self.px_y(y + dh));
+        self.emit_clipped_uv(x0, y0, x1, y1, rect.u0, rect.v0, rect.u1, rect.v1, u32::MAX);
+        true
+    }
+
+    /// Draw a decoded video using a separate full-resolution GPU texture.
+    /// `rgba` is present only when a new frame has arrived.
+    #[allow(clippy::too_many_arguments)]
+    pub fn video_scene(&mut self, w: u32, h: u32, rgba: Option<Vec<u8>>, x: f32, y: f32, dw: f32, dh: f32) {
+        if let Some(rgba) = rgba {
+            self.batch.patches.push(crate::font::Patch { x: u32::MAX, y: u32::MAX, width: w, height: h, rgba });
+        }
+        let start = self.batch.vertices.len();
+        let (x0, y0, x1, y1) = (self.px_x(x), self.px_y(y), self.px_x(x + dw), self.px_y(y + dh));
+        self.emit_clipped_uv(x0, y0, x1, y1, 0.0, 0.0, 1.0, 1.0, u32::MAX);
+        self.batch.blend_since(start, crate::hud::Blend::Video);
     }
 
     /// Draw a cached RGBA project icon (`w x h`) into `(x, y, dw, dh)` dp.
@@ -4462,6 +4532,24 @@ mod tests {
             assert_eq!((a.x, a.y, a.width, a.height), (b.x, b.y, b.width, b.height));
             assert_eq!(a.rgba, b.rgba);
         }
+        reset_atlas();
+    }
+
+    #[test]
+    fn avatar_slot_updates_only_when_the_preview_changes() {
+        let atlas = HudAtlas::build(Path::new("/nonexistent/horizon-test-assets")).unwrap();
+        reset_atlas();
+        let bytes = vec![255; 384 * 480 * 4];
+        with_cache(&atlas, |cache| {
+            let rect = cache.scene_avatar(&atlas, 384, 480, &bytes, 7).unwrap();
+            assert_eq!((rect.w, rect.h), (384, 480));
+            assert_eq!(cache.pending.len(), 1);
+            cache.scene_avatar(&atlas, 384, 480, &bytes, 7).unwrap();
+            assert_eq!(cache.pending.len(), 1);
+            cache.scene_avatar(&atlas, 384, 480, &bytes, 8).unwrap();
+            assert_eq!(cache.pending.len(), 2);
+            assert!(cache.scene_avatar(&atlas, 1149, 480, &bytes, 9).is_none());
+        });
         reset_atlas();
     }
 

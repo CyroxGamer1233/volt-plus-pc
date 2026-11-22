@@ -12,6 +12,8 @@ winit = "0.30.13"
 # The window icon.
 horizon-theme = { path = "../horizon-theme" }
 png = "0.18"
+serde_json = "1.0.151"
+sha2 = "0.10.9"
 # The DualSense's trigger effects (the `controllers` feature).
 horizon-dualsense = { path = "../horizon-dualsense", optional = true }
 

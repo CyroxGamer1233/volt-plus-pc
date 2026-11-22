@@ -70,6 +70,7 @@ class SourceExportTests(unittest.TestCase):
             self.assertTrue(prohibited(name), name)
         for name in ['LICENSE', 'crates/horizon-client-render/src/touch.rs', '.env.example',
                      'packaging/android/java/dev/horizon/android/HorizonActivity.java',
+                     'packaging/android/java/dev/horizon/android/IntroActivity.java',
                      'packaging/android/java/dev/horizon/android/HorizonDocumentsProvider.java']:
             self.assertFalse(prohibited(name), name)
 

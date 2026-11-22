@@ -36,7 +36,15 @@ pub(super) struct Wardrobe {
     cache: cloud::Cache,
     pub view: [f32; 3],
     worker: Option<mpsc::Receiver<(String, Result<(cloud::Cache, bool), String>)>>,
-    bitmap: Vec<([f32; 4], u32)>,
+    bitmap: image::RgbaImage,
+    bitmap_revision: u64,
+    preview_skin: Option<std::sync::Arc<image::RgbaImage>>,
+    preview_cape: Option<std::sync::Arc<image::RgbaImage>>,
+    preview_model: Model,
+    appearance_generation: u64,
+    render_worker: Option<mpsc::Receiver<(u64, image::RgbaImage)>>,
+    render_pending: bool,
+    head_bitmap: Vec<([f32; 4], u32)>,
     rect: [f32; 4],
     fingers: std::collections::BTreeMap<u64, [f32; 2]>,
     note: String,
@@ -67,7 +75,15 @@ impl Wardrobe {
             camera: Default::default(),
             cache: Default::default(),
             worker: None,
-            bitmap: vec![],
+            bitmap: image::RgbaImage::new(384, 480),
+            bitmap_revision: 0,
+            preview_skin: None,
+            preview_cape: None,
+            preview_model: Model::Classic,
+            appearance_generation: 0,
+            render_worker: None,
+            render_pending: false,
+            head_bitmap: vec![],
             rect: [0.0; 4],
             view: [0.0; 3],
             fingers: Default::default(),
@@ -381,7 +397,7 @@ impl Wardrobe {
                 let bytes = skins::read_file(&self.default_skin).ok()?;
                 skins::read_skin(&bytes).ok()
             })
-            .unwrap_or_else(preview::mannequin);
+            .unwrap_or_else(preview::default_steve);
         // A real selection owns the head; with none, keep the cached cloud
         // head until the cloud fetch answers, rather than flashing Steve.
         if let Some(image) = &chosen {
@@ -406,29 +422,71 @@ impl Wardrobe {
                 .and_then(|b| skins::read_cape(&b).ok())
         };
         let model = selection.model;
-        let image = preview::render(&skin, cape.as_ref(), model, self.camera, [160, 200]);
-        self.bitmap.clear();
-        for y in 0..image.height() {
+        let head = preview::render_head(&skin, 48);
+        self.head_bitmap.clear();
+        for y in 0..head.height() {
             let mut x = 0;
-            while x < image.width() {
-                let color = image.get_pixel(x, y).0;
+            while x < head.width() {
+                let [r, g, b, a] = head.get_pixel(x, y).0;
                 let start = x;
                 x += 1;
-                while x < image.width() && image.get_pixel(x, y).0 == color {
-                    x += 1;
-                }
-                if color[3] > 0 {
-                    self.bitmap.push((
-                        [start as f32, y as f32, (x - start) as f32, 1.0],
-                        rgba(color[0], color[1], color[2], color[3]),
-                    ));
+                while x < head.width() && head.get_pixel(x, y).0 == [r, g, b, a] { x += 1; }
+                if a > 0 { self.head_bitmap.push(([start as f32, y as f32, (x - start) as f32, 1.0], rgba(r, g, b, a))); }
+            }
+        }
+        // Rasterize at more than twice the former dimensions. The skin's own
+        // Minecraft texels remain sharp; model edges no longer use large quads.
+        // Invalidate any in-flight render from the previous appearance.
+        self.appearance_generation = self.appearance_generation.wrapping_add(1);
+        self.render_pending = false;
+        self.preview_skin = Some(std::sync::Arc::new(skin));
+        self.preview_cape = cape.map(std::sync::Arc::new);
+        self.preview_model = model;
+        self.bitmap = preview::render(self.preview_skin.as_ref().unwrap(), self.preview_cape.as_deref(), model, self.camera, [384, 480]);
+        self.bitmap_revision = self.bitmap_revision.wrapping_add(1);
+    }
+    // One worker at a time; movements are coalesced to the most recent camera.
+    // No filesystem reads, skin decode or head reconstruction on pointer events.
+    fn queue_camera_render(&mut self) {
+        self.render_pending = true;
+        self.start_camera_render();
+    }
+    fn start_camera_render(&mut self) {
+        if self.render_worker.is_some() || !self.render_pending { return; }
+        let Some(skin) = self.preview_skin.clone() else { return; };
+        let cape = self.preview_cape.clone();
+        let model = self.preview_model;
+        let camera = self.camera;
+        let generation = self.appearance_generation;
+        self.render_pending = false;
+        let (tx, rx) = mpsc::channel();
+        self.render_worker = Some(rx);
+        std::thread::spawn(move || {
+            let image = preview::render(&skin, cape.as_deref(), model, camera, [384, 480]);
+            let _ = tx.send((generation, image));
+        });
+    }
+    fn poll_camera_render(&mut self) {
+        let result = self.render_worker.as_ref().and_then(|worker| match worker.try_recv() {
+            Ok(result) => Some(Some(result)),
+            Err(mpsc::TryRecvError::Disconnected) => Some(None),
+            Err(mpsc::TryRecvError::Empty) => None,
+        });
+        if let Some(result) = result {
+            self.render_worker = None;
+            if let Some((generation, image)) = result {
+                if generation == self.appearance_generation {
+                    self.bitmap = image;
+                    self.bitmap_revision = self.bitmap_revision.wrapping_add(1);
                 }
             }
+            self.start_camera_render();
         }
     }
     pub fn is_animating(&self) -> bool {
         let now = std::time::Instant::now();
         self.worker.is_some()
+            || self.render_worker.is_some() || self.render_pending
             || crate::documents::busy()
             || self
                 .tab_changed_at
@@ -451,6 +509,38 @@ impl Wardrobe {
                 self.camera.pitch = -8.0;
             }
             self.preview();
+        }
+    }
+
+    /// The account head and full-body preview use the identical selected skin.
+    pub fn draw_head(&self, ui: &mut Ui, x: f32, y: f32, size: f32) {
+        let scale = size / 48.0;
+        for ([bx, by, bw, bh], color) in &self.head_bitmap {
+            ui.rounded(x + bx * scale, y + by * scale, bw * scale, bh * scale, 0.0, *color);
+        }
+    }
+
+    /// The same applied-skin preview used by the wardrobe, placed in the shared scene.
+    /// Keeping the hit rectangle here makes drag/pinch orbit work on the dashboard too.
+    pub fn draw_scene(&mut self, ui: &mut Ui, rect: [f32; 4]) {
+        self.poll_camera_render();
+        self.rect = rect;
+        let [x, y, w, h] = rect;
+        let scale = (w / 160.0).min(h / 200.0);
+        let ox = x + (w - 160.0 * scale) * 0.5;
+        let oy = y + (h - 200.0 * scale) * 0.5;
+        ui.rounded(x + w * 0.23, y + h * 0.91, w * 0.54, 6.0, 3.0,
+            horizon_client::hud::rgba(8, 10, 20, 100));
+        if !ui.scene_avatar(self.bitmap.width(), self.bitmap.height(), self.bitmap.as_raw(), self.bitmap_revision,
+            ox, oy, 160.0 * scale, 200.0 * scale) {
+            // Small boot atlases have no room for the reserved slot.
+            for y in (0..self.bitmap.height()).step_by(3) {
+                for x in (0..self.bitmap.width()).step_by(3) {
+                    let [r, g, b, a] = self.bitmap.get_pixel(x, y).0;
+                    if a > 0 { ui.rounded(ox + x as f32 / 2.4 * scale, oy + y as f32 / 2.4 * scale,
+                        1.25 * scale, 1.25 * scale, 0.0, rgba(r, g, b, a)); }
+                }
+            }
         }
     }
 
@@ -491,7 +581,7 @@ impl Wardrobe {
             self.camera.drag(point[0] - old[0], point[1] - old[1]);
         }
         self.fingers.insert(touch.id, point);
-        self.preview();
+        self.queue_camera_render();
         true
     }
 
@@ -508,11 +598,9 @@ impl Wardrobe {
         let theme = active_theme();
         let now = std::time::Instant::now();
         let tab_t = motion::spring_expressive_default(motion::progress(self.tab_changed_at, now, 0.24));
-        let sel_t = motion::spring_expressive_spatial(motion::progress(self.selection_changed_at, now, 0.26));
         let slide_y = (1.0 - tab_t) * 8.0;
 
         let h = ui.h;
-        let wide = w >= 580.0;
 
         // 1. Header & Segmented Skins / Capes Switcher
         ui.text(
@@ -595,175 +683,23 @@ impl Wardrobe {
         };
         let model = selection.model;
 
-        // 2. Left / Top Studio 3D Preview Card
-        let preview_y = tabs_y + 48.0;
-        let preview_w = if wide { 248.0_f32.min(w * 0.41) } else { w };
-        let preview_h = if wide {
-            (h - preview_y - 84.0).clamp(165.0, 276.0)
-        } else {
-            (h * 0.30).clamp(138.0, 192.0)
-        };
-        let px = x;
-        self.rect = [px, preview_y, preview_w, preview_h];
-
-        // Studio stage background with subtle inner rim and pedestal
-        ui.rounded(px, preview_y, preview_w, preview_h, 10.0, theme.surface);
-        ui.rounded(
-            px + 4.0,
-            preview_y + 4.0,
-            preview_w - 8.0,
-            preview_h - 8.0,
-            13.0,
-            theme.surface_dim,
-        );
-        ui.stroke_rounded(px, preview_y, preview_w, preview_h, 10.0, 1.2, theme.border);
-
-        // Studio floor pedestal oval beneath the character
-        let ped_w = (preview_w * 0.46).clamp(72.0, 124.0);
-        let ped_h = 12.0;
-        let ped_x = px + (preview_w - ped_w) * 0.5;
-        let ped_y = preview_y + preview_h - 48.0;
-        ui.rounded(ped_x, ped_y, ped_w, ped_h, 6.0, theme.accent_soft);
-        ui.stroke_rounded(ped_x, ped_y, ped_w, ped_h, 6.0, 1.0, theme.border);
-
-        // Top-left status badge inside studio card
-        let badge_txt = if self.capes {
-            if selection.hide_cape {
-                "Cape Hidden"
-            } else {
-                "3D Cape View"
-            }
-        } else if model == Model::Slim {
-            "Slim (3px Arms)"
-        } else {
-            "Classic (4px Arms)"
-        };
-        let badge_w = (ui.measure(Face::SemiBold, 9.5, badge_txt) + 16.0).min(preview_w * 0.55);
-        ui.rounded(
-            px + 10.0,
-            preview_y + 10.0,
-            badge_w,
-            20.0,
-            6.0,
-            theme.surface_selected,
-        );
-        ui.border(
-            px + 10.0,
-            preview_y + 10.0,
-            badge_w,
-            20.0,
-            6.0,
-            theme.accent,
-        );
-        ui.centered_fit(
-            Face::SemiBold,
-            9.5,
-            [px + 10.0, preview_y + 10.0, badge_w, 20.0],
-            theme.text_primary,
-            badge_txt,
-        );
-
-        // Top-right orbit & zoom hint
-        let hint = format!("{:.0}%", self.camera.zoom * 100.0);
-        let hint_w = 42.0;
-        ui.rounded(
-            px + preview_w - hint_w - 10.0,
-            preview_y + 10.0,
-            hint_w,
-            20.0,
-            6.0,
-            theme.surface,
-        );
-        ui.centered_fit(
-            Face::Mono,
-            9.0,
-            [
-                px + preview_w - hint_w - 10.0,
-                preview_y + 10.0,
-                hint_w,
-                20.0,
-            ],
-            theme.text_muted,
-            &hint,
-        );
-
-        // Render 3D character bitmap with subtle selection pop scale
-        let pop = 0.97 + 0.03 * sel_t;
-        let scale = ((preview_w / 160.0).min((preview_h - 18.0) / 200.0)) * pop;
-        let ox = px + (preview_w - 160.0 * scale) * 0.5;
-        let oy = preview_y + (preview_h - 14.0 - 200.0 * scale) * 0.5;
-        for ([bx, by, bw, bh], col) in &self.bitmap {
-            ui.rounded(
-                ox + bx * scale,
-                oy + by * scale,
-                bw * scale,
-                bh * scale,
-                0.0,
-                *col,
-            );
+        // The portrait is shared with the dashboard, rather than duplicated in
+        // this panel. The same camera and selected skin drive both views.
+        let scene_x = 12.0;
+        let scene_w = (x - 30.0).max(100.0);
+        let controls_y = h - 79.0;
+        let button_w = 38.0;
+        for (i, (label, action)) in [("<", Action::WardrobeRotate(-1)), (">", Action::WardrobeRotate(1))].into_iter().enumerate() {
+            button(ui, targets, [scene_x + scene_w * 0.5 - 41.0 + i as f32 * 44.0, controls_y, button_w, 28.0], label, action, false);
         }
-
-        // Floating camera orbit & zoom dock at the bottom of the 3D preview card
-        let control_y = preview_y + preview_h - 36.0;
-        let btn_w = 34.0;
-        let gap = 6.0;
-        let cluster = 2.0 * btn_w + gap;
-        let cx = px + (preview_w - cluster) * 0.5;
-        for (i, (label, action)) in [
-            ("<", Action::WardrobeRotate(-1)),
-            (">", Action::WardrobeRotate(1)),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            button(
-                ui,
-                targets,
-                [cx + i as f32 * (btn_w + gap), control_y, btn_w, 28.0],
-                label,
-                action,
-                false,
-            );
-        }
-
-        // Primary quick-toggle button directly below 3D preview card
-        let primary_toggle_y = preview_y + preview_h + 8.0;
-        if self.capes {
-            button(
-                ui,
-                targets,
-                [px, primary_toggle_y, preview_w, 34.0],
-                if selection.hide_cape {
-                    "Cape Visibility: Hidden (Tap to Show)"
-                } else {
-                    "Cape Visibility: Shown (Tap to Hide)"
-                },
-                Action::WardrobeHideCape,
-                !selection.hide_cape,
-            );
-        } else {
-            button(
-                ui,
-                targets,
-                [px, primary_toggle_y, preview_w, 34.0],
-                if model == Model::Slim {
-                    "Arm Model: Alex / Slim (3px)"
-                } else {
-                    "Arm Model: Steve / Classic (4px)"
-                },
-                Action::WardrobeModel,
-                false,
-            );
-        }
-
-        // 3. Right / Bottom Gallery & Details Column
-        let lx = if wide { x + preview_w + 16.0 } else { x };
-        let lw = if wide { w - preview_w - 16.0 } else { w };
-        let listtop = if wide {
-            preview_y + slide_y
-        } else {
-            primary_toggle_y + 42.0 + slide_y
-        };
+        button(ui, targets, [scene_x, h - 45.0, scene_w, 30.0],
+            if self.capes {
+                if selection.hide_cape { "Cape hidden" } else { "Cape visible" }
+            } else if model == Model::Slim { "Arm Model: Slim (3px)" } else { "Arm Model: Classic (4px)" },
+            if self.capes { Action::WardrobeHideCape } else { Action::WardrobeModel }, false);
+        let lx = x;
+        let lw = w;
+        let listtop = tabs_y + 48.0 + slide_y;
 
         // Active Appearance Details & Primary Action Bar
         let active_title = if let Some(id) = selected_id {

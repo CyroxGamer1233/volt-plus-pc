@@ -24,6 +24,8 @@ mod browser;
 pub(crate) mod android;
 #[path = "android/dns.rs"]
 mod android_dns;
+#[path = "android/wallpapers.rs"]
+mod wallpapers;
 #[path = "android/catalog.rs"]
 mod catalog;
 #[path = "android/device_preferences.rs"]
@@ -36,6 +38,8 @@ mod diagnostics;
 mod display;
 #[path = "android/document_bridge.rs"]
 mod document_bridge;
+#[path = "android/java_control_bridge.rs"]
+mod java_control_bridge;
 #[path = "android/document_provider.rs"]
 mod document_provider;
 #[path = "android/document_store.rs"]

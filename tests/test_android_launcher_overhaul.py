@@ -261,7 +261,7 @@ class LauncherOverhaulTests(unittest.TestCase):
         self.assertIn("Action::ResetTheme", launcher_pages)
 
         # Ensure draw_hud_editor in launcher_pages.rs renders directly without page/modal animation wrapper
-        editor_branch = launcher_pages.split("if let Some(tc) = &mut self.control_editor {")[
+        editor_branch = launcher_pages.split("if self.control_editor.is_some() {")[
             1
         ].split("return Ok(());")[0]
         self.assertIn("draw_hud_editor", editor_branch)
@@ -757,9 +757,10 @@ class LauncherOverhaulTests(unittest.TestCase):
         self.assertIn("let total_dots_w = dot_sz * 3.0 + dot_gap * 2.0;", touch_ui)
         self.assertIn('"Send Key (Keyboard / Mouse / Action)"', touch_ui)
 
-        # 5. Homepage shows selected Renderer mode and downloaded version Changelogs
+        # 5. The redesigned home keeps the selected renderer and Play action.
         self.assertIn("Renderer: {}", launcher_pages)
-        self.assertIn("CHANGELOG — MINECRAFT 26.3 • HORIZON ANDROID", launcher_pages)
+        self.assertIn("Action::Renderer", launcher_pages)
+        self.assertIn("Action::Play", launcher_pages)
 
         # 6. Duplicate control preset name confirmation dialog (Save to replace or Cancel)
         self.assertIn("pub duplicate_name_confirm_open: bool,", editor)
@@ -1393,12 +1394,13 @@ class LauncherOverhaulTests(unittest.TestCase):
         self.assertIn("fn resolve_and_port_modrinth_deps_recursive(", cat_rs)
         self.assertIn('.join("checks-1")', cat_rs)
 
-        # 3. Verify Jetpack Compose Material You Dashboard (Hero Split Button, 2-Column Bento Grid, Single Discord/GitHub, Stadium Nav Rail)
+        # 3. Shared landscape and bottom navigation replace the old hero and rail.
         lp_rs = _read_repo_file("crates/horizon-client/src/android/launcher_pages.rs")
-        self.assertIn("ui.m3_tonal_card(content_x, card_y, content_w, hero_h, 18.0, true);", lp_rs)
-        self.assertIn('"Horizon Mod Engine"', lp_rs)
-        self.assertIn('"Installed Mods"', lp_rs)
-        self.assertIn('"Browse Mods"', lp_rs)
+        self.assertIn('greenhouse_poster.png', lp_rs)
+        self.assertIn('self.wardrobe.draw_scene', lp_rs)
+        self.assertIn('let nav_pages = [Page::Play, Page::Mods, Page::Packs, Page::Shaders,', lp_rs)
+        self.assertIn('Page::Installed, Page::Skins, Page::Settings]', lp_rs)
+        self.assertIn('crate::device_runtime::gyro(motion_ok', lp_rs)
         self.assertIn('"Build Native .so"', lp_rs)
 
         compose_kt = _read_repo_file("packaging/android/compose/HorizonComposeLauncher.kt")

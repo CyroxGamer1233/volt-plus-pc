@@ -1,0 +1,75 @@
+name: Original control engine build probe
+on:
+  push:
+    branches: [arena/e973ac10-volt-plus]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  zalith:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
+        with:
+          gradle-version: '8.14'
+      - name: Prepare Android SDK
+        run: '"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0"'
+      - name: Build original modules
+        working-directory: tests/control_engine_build
+        run: |
+          set -o pipefail
+          gradle :layer:assembleDebug :layer:testDebugUnitTest :pojav:testDebugUnitTest --stacktrace 2>&1 | tee "$RUNNER_TEMP/controls-build.log"
+          python3 - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          results = list(Path('layer/build/test-results/testDebugUnitTest').glob('TEST-*.xml'))
+          suites = [ET.parse(p).getroot() for p in results]
+          tests = sum(int(s.get('tests', '0')) for s in suites)
+          if tests < 9:
+              raise SystemExit(f'Original layout fixture tests did not run: {tests}')
+          print(f'::notice::Original Zalith fixture tests executed: {tests}')
+          results = list(Path('pojav/build/test-results/testDebugUnitTest').glob('TEST-*.xml'))
+          tests = sum(int(ET.parse(p).getroot().get('tests', '0')) for p in results)
+          if tests < 5:
+              raise SystemExit(f'Pojav converter fixture tests did not run: {tests}')
+          print(f'::notice::Original Pojav converter fixture tests executed: {tests}')
+          PY
+      - name: Compile experimental engine in Android application
+        run: |
+          set -o pipefail
+          gradle --no-daemon -p packaging/android -Pabi=arm64-v8a -PminSdk=28 \
+            -PexperimentalJavaControls=true compileDebugJavaWithJavac --stacktrace 2>&1 | tee "$RUNNER_TEMP/controls-app-build.log"
+      - name: Confirm default build does not enable engine
+        run: |
+          gradle --no-daemon -q -p packaging/android -Pabi=arm64-v8a projects > "$RUNNER_TEMP/default-projects.log"
+          if grep -q "Project ':layer'" "$RUNNER_TEMP/default-projects.log"; then
+            echo 'Experimental engine unexpectedly enabled in default build' >&2
+            exit 1
+          fi
+      - name: Summarize failures
+        if: failure()
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          for report in Path('tests/control_engine_build').glob('*/build/test-results/testDebugUnitTest/TEST-*.xml'):
+              suite = ET.parse(report).getroot()
+              for case in suite.findall('testcase'):
+                  for fail in case.findall('failure'):
+                      detail = (fail.get('message', '') + ' ' + (fail.text or ''))[:1800]
+                      print('::notice::' + (case.get('name', '') + ': ' + detail).replace('%','%25').replace('\n','%0A'))
+          for name in ['controls-build.log', 'controls-app-build.log']:
+              p = Path(os.environ['RUNNER_TEMP']) / name
+              if p.exists():
+                  lines = p.read_text(errors='replace').splitlines()
+                  for i, line in enumerate(lines):
+                      if ' error:' in line or line.startswith('e: ') or line.startswith('* What went wrong:'):
+                          for row in lines[i:i+6]: print('::notice::' + row[:350].replace('%','%25'))
+          PY

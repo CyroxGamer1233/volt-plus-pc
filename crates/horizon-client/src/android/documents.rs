@@ -277,7 +277,8 @@ pub fn begin_folder_into_dir(target_dir: PathBuf) -> std::result::Result<(), Str
 }
 
 /// Opens Android's `ACTION_OPEN_DOCUMENT` picker to import a control preset JSON file,
-/// automatically detect whether it is an `MCPE` or `GoyControl` layout, and save it in the proper directory.
+/// import an `MCPE` or `GoyControl` layout. Pojav and Zalith files are
+/// preserved separately but cannot be activated until their engines are wired.
 pub fn begin_control_import(game_home: PathBuf) -> std::result::Result<(), String> {
     if busy() {
         return Err("Finish or cancel the current import first".into());
@@ -308,7 +309,7 @@ pub fn begin_control_import(game_home: PathBuf) -> std::result::Result<(), Strin
         return Err("Android document picker is unavailable".into());
     }
     notice(
-        "Choose a control preset (.json) — auto-detects MCPE or GoyControl",
+        "Choose a control preset (.json). Java layouts can be saved, but are not active yet.",
         false,
     );
     Ok(())
@@ -748,13 +749,26 @@ fn stage(request: Request, mut input: std::fs::File, name: String) -> Result<()>
         use std::io::Read;
         set_progress(
             format!("Importing '{name}'..."),
-            "Detecting control layout (MCPE / GoyControl)...",
+            "Detecting control layout...",
             Some(0.5),
         );
         let mut bytes = Vec::new();
-        input.take(2 * 1024 * 1024).read_to_end(&mut bytes)?;
+        input.take((horizon_client::java_layout_store::MAX_LAYOUT_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)?;
+        if bytes.len() > horizon_client::java_layout_store::MAX_LAYOUT_BYTES {
+            return Err("Control layout exceeds 2 MiB".into());
+        }
         if CANCEL.load(Ordering::Relaxed) {
             return Err("Import cancelled".into());
+        }
+        if horizon_client::java_layout_store::looks_like_java(&bytes) {
+            let (format, _) = horizon_client::java_layout_store::store(&request.home, &bytes)?;
+            let name = match format {
+                horizon_client::java_layout_store::Format::Pojav => "Pojav",
+                horizon_client::java_layout_store::Format::Zalith => "Zalith",
+            };
+            notice(format!("{name} layout saved, but Java controls are not available yet. Existing controls were not changed."), false);
+            return Ok(());
         }
         let meta =
             horizon_client::touch::Settings::detect_and_import_preset(&request.home, &bytes, &name)?;

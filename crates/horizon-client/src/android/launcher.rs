@@ -1,6 +1,8 @@
 //! A native Rust installer and version screen, sharing the game's Vulkan renderer.
 use crate::catalog::{Catalog, Page};
 use crate::game;
+#[path = "cross_road.rs"]
+mod cross_road;
 #[path = "chooser.rs"]
 mod chooser;
 #[path = "launcher_gesture.rs"]
@@ -45,16 +47,26 @@ pub(super) struct Launcher {
     game: Option<Box<dyn ApplicationHandler>>,
     cursor: (f64, f64),
     mouse_down: bool,
+    focused: bool,
     feedback: Option<(pages::Action, Instant)>,
     install: Arc<Mutex<horizon_client::official_install::InstallProgress>>,
     install_paused: Arc<std::sync::atomic::AtomicBool>,
     install_cancelled: Arc<std::sync::atomic::AtomicBool>,
     install_transfer: crate::catalog::TransferTracker,
+    road_game: Option<cross_road::RoadGame>,
+    auto_launch_after_install: bool,
     pub(super) anim: pages::AnimState,
     pub(super) control_editor: Option<horizon_client::touch::TouchControls>,
     worker: Option<mpsc::Receiver<std::result::Result<(), String>>>,
     error: Option<String>,
     catalog: Catalog,
+    wallpapers_open: bool,
+    wallpaper_worker: Option<mpsc::Receiver<std::result::Result<String, String>>>,
+    wallpaper_status: String,
+    wallpaper_has_frame: bool,
+    wallpaper_frame_size: [u32; 2],
+    wallpaper_buffer: Vec<u8>,
+    wallpaper_color: Option<[u8; 3]>,
     targets: Vec<([f32; 4], pages::Action)>,
     list_targets: Vec<([f32; 4], pages::Action)>,
     list_view: Option<[f32; 3]>,
@@ -75,6 +87,34 @@ pub(super) struct Launcher {
 }
 
 impl Launcher {
+    fn start_wallpaper(&mut self) {
+        let i = crate::wallpapers::effective_index(self.catalog.config.wallpaper_index);
+        if i == crate::wallpapers::DEFAULT_INDEX
+            && let Err(error) = crate::wallpapers::ensure_bundled_default(&self.home)
+        {
+            self.wallpaper_status = format!("Default video unavailable: {error}");
+            return;
+        }
+        if let Some(item) = crate::wallpapers::WALLPAPERS.get(i)
+            && let Some(path) = crate::wallpapers::path(&self.home, i)
+        {
+            if std::fs::metadata(&path).is_ok_and(|m| m.len() == item.size) {
+                let viewport = self.renderer.as_ref().map(|r| [r.config.width, r.config.height])
+                    .unwrap_or([item.width, item.height]);
+                self.wallpaper_frame_size = crate::wallpapers::frame_size([item.width, item.height], viewport);
+                if let Err(e) = crate::native_ime::wallpaper_start(&path, [item.width, item.height], self.wallpaper_frame_size) {
+                    self.wallpaper_status = format!("Video unavailable: {e}");
+                }
+            } else {
+                self.wallpaper_status = "Download the selected video again.".into();
+            }
+        }
+    }
+    fn recycle_wallpaper_buffer(&mut self, batch: &mut HudBatch) {
+        if let Some(patch) = batch.patches.iter_mut().find(|p| p.x == u32::MAX && p.y == u32::MAX) {
+            self.wallpaper_buffer = std::mem::take(&mut patch.rgba);
+        }
+    }
     pub(super) fn refresh_wardrobe_account(&mut self) {
         if self.catalog.page == Page::Skins {
             self.catalog.scroll = 0.0;
@@ -233,16 +273,26 @@ impl Launcher {
             game: None,
             cursor: (0.0, 0.0),
             mouse_down: false,
+            focused: true,
             feedback: None,
             install: Arc::default(),
             install_paused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             install_cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             install_transfer: Default::default(),
+            road_game: None,
+            auto_launch_after_install: false,
             anim: Default::default(),
             control_editor: None,
             worker: None,
             error: None,
             catalog,
+            wallpapers_open: false,
+            wallpaper_worker: None,
+            wallpaper_status: "Select a video to download or equip it.".into(),
+            wallpaper_has_frame: false,
+            wallpaper_frame_size: [0, 0],
+            wallpaper_buffer: Vec::new(),
+            wallpaper_color: None,
             targets: vec![],
             list_targets: vec![],
             list_view: None,
@@ -306,6 +356,8 @@ impl Launcher {
         if let Err(error) = self.open(events) {
             self.fail(error);
             events.exit();
+        } else {
+            self.start_wallpaper();
         }
     }
     pub(super) fn configure_screen(&self) {
@@ -406,6 +458,10 @@ impl Launcher {
                 let _ = tc.settings.save_to(&game_home.join("horizon-touch.json"));
                 self.control_editor = None;
             }
+            return;
+        }
+        if self.road_game.is_some() {
+            self.road_game = None;
             return;
         }
         if !self.anim.intro_done {
@@ -641,6 +697,9 @@ impl Launcher {
                     return Err(error);
                 }
             };
+            // Stop decoding while the game owns the Android window.
+            crate::native_ime::wallpaper_stop();
+            self.wallpaper_has_frame = false;
             // Android has one native window; release its surface before handing it over.
             self.renderer = None;
             self.window = None;
@@ -672,11 +731,14 @@ impl Launcher {
             self.worker = Some(receiver);
             std::thread::spawn(move || {
                 let result =
-                    horizon_client::official_install::install_with_progress(&home, |update| {
+                    horizon_client::official_install::install_controlled(&home, |update| {
                         while paused.load(std::sync::atomic::Ordering::Relaxed)
                             && !cancelled.load(std::sync::atomic::Ordering::Relaxed)
                         {
                             std::thread::sleep(Duration::from_millis(50));
+                        }
+                        if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+                            return false;
                         }
                         let mut current = install
                             .lock()
@@ -688,6 +750,7 @@ impl Launcher {
                         };
                         *current =
                             horizon_client::official_install::InstallProgress { done, ..update };
+                        true
                     });
                 let _ = sender.send(result.map_err(|e| e.to_string()));
             });
@@ -705,6 +768,8 @@ impl ApplicationHandler for Launcher {
         if let Err(error) = self.open(events) {
             self.fail(error);
             events.exit();
+        } else {
+            self.start_wallpaper();
         }
     }
     fn suspended(&mut self, events: &ActiveEventLoop) {
@@ -713,6 +778,11 @@ impl ApplicationHandler for Launcher {
             return game.suspended(events);
         }
         self.drag = None;
+        self.focused = false;
+        crate::native_ime::wallpaper_stop();
+        // Keep the last texture while Android briefly loses focus (screenshots,
+        // notification shade); decoding restarts after the surface resumes.
+        let _ = crate::device_runtime::gyro(false, 1.0, 0);
         if let Some(renderer) = &mut self.renderer {
             renderer.suspend_surface();
         }
@@ -724,8 +794,9 @@ impl ApplicationHandler for Launcher {
         if matches!(event, WindowEvent::Resized(_)) {
             let _ = crate::native_ime::viewport_bottom();
         }
-        if matches!(event, WindowEvent::Focused(true)) {
-            self.configure_screen();
+        if let WindowEvent::Focused(focused) = &event {
+            self.focused = *focused;
+            if *focused { self.configure_screen(); }
         }
         if let Some(game) = &mut self.game {
             game.window_event(events, id, event);
@@ -740,6 +811,14 @@ impl ApplicationHandler for Launcher {
             WindowEvent::Resized(size) => {
                 if let Some(r) = &mut self.renderer {
                     r.resize(size.width, size.height);
+                }
+                if let Some(item) = crate::wallpapers::WALLPAPERS.get(crate::wallpapers::effective_index(self.catalog.config.wallpaper_index)) {
+                    let viewport = self.renderer.as_ref().map(|r| [r.config.width, r.config.height])
+                        .unwrap_or([size.width, size.height]);
+                    let target = crate::wallpapers::frame_size([item.width, item.height], viewport);
+                    if size.width > 0 && size.height > 0 && target != self.wallpaper_frame_size {
+                        self.start_wallpaper();
+                    }
                 }
                 Ok(())
             }
@@ -756,6 +835,7 @@ impl ApplicationHandler for Launcher {
                 self.controller_repeat = None;
                 self.mouse_down = false;
                 self.drag = None;
+                let _ = crate::device_runtime::gyro(false, 1.0, 0);
                 Ok(())
             }
             WindowEvent::MouseInput {
@@ -870,13 +950,23 @@ impl ApplicationHandler for Launcher {
         }
         if let Some(result) = self.worker.as_ref().and_then(|w| w.try_recv().ok()) {
             self.worker = None;
-            if let Err(error) = result {
+            if self.install_cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+                self.road_game = None;
+                self.auto_launch_after_install = false;
+                self.catalog.status = "Game preparation cancelled. Completed downloads are kept.".into();
+            } else if let Err(error) = result {
+                self.road_game = None;
+                self.auto_launch_after_install = false;
                 let message = error.to_string();
                 if message.contains("Dns Failed") || message.contains("lookup address") {
                     self.fail("Minecraft download interrupted: DNS could not resolve the download host. Check your connection, VPN or Private DNS, then retry Download. Completed files are kept.");
                 } else {
                     self.fail(error);
                 }
+            } else if self.auto_launch_after_install {
+                // Keep the request pending while account pre-warming or another
+                // modal blocks launching; do not silently drop the handoff.
+                self.road_game = None;
             }
         }
         if let Some(tc) = &mut self.control_editor
@@ -980,6 +1070,18 @@ impl ApplicationHandler for Launcher {
             }
         }
 
+        if self.auto_launch_after_install
+            && self.worker.is_none()
+            && self.session_worker.is_none()
+            && !self.exit_confirmation
+            && self.chooser.is_none()
+            && !self.login.pending()
+            && !self.launch_pending_tick
+        {
+            self.auto_launch_after_install = false;
+            if let Err(error) = self.action(events) { self.fail(error); }
+        }
+
         if self.launch_pending_tick {
             self.launch_pending_tick = false;
             if let Err(error) = self.action(events) {
@@ -1010,13 +1112,15 @@ impl ApplicationHandler for Launcher {
                     .as_ref()
                     .is_some_and(|m| m.loading)
                 || self.anim.is_active()
+                || (self.focused && !self.catalog.config.battery_perf_mode
+                    && !horizon_client::ui_theme::motion::reduced_motion())
                 || ({
                     let theme = horizon_client::ui_theme::active_theme();
                     (theme.is_horizon || theme.is_nightly || theme.is_custom)
                         && !horizon_client::ui_theme::motion::reduced_motion()
                         && !horizon_client::ui_theme::motion::launcher_animations_disabled()
                 })
-                || (self.catalog.page == Page::Skins && self.wardrobe.is_animating())
+                || self.wardrobe.is_animating()
                 || self
                     .feedback
                     .is_some_and(|(_, t)| t.elapsed() < Duration::from_millis(280))

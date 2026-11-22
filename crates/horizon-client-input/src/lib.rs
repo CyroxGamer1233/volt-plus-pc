@@ -7,6 +7,8 @@ pub mod clipboard;
 pub mod gamepad;
 pub mod input;
 pub mod interaction_input;
+pub mod java_controls;
+pub mod java_layout_store;
 pub mod key_names;
 pub mod keybinds;
 pub mod keymapping;

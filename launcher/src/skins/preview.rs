@@ -49,6 +49,57 @@ pub fn mannequin() -> RgbaImage {
     })
 }
 
+/// Original Steve-like fallback artwork used before official game assets are installed.
+/// The flat UV layout is generated locally rather than bundling Minecraft textures.
+pub fn default_steve() -> RgbaImage {
+    let mut skin = RgbaImage::new(64, 64);
+    let paint = |skin: &mut RgbaImage, x0: u32, y0: u32, w: u32, h: u32, c: [u8; 4]| {
+        for y in y0..y0 + h { for x in x0..x0 + w {
+            let mut shade = c;
+            if (x * 3 + y * 5) % 11 == 0 {
+                for channel in &mut shade[..3] { *channel = channel.saturating_sub(7); }
+            }
+            skin.put_pixel(x, y, Rgba(shade));
+        }}
+    };
+    let face = [184, 129, 91, 255];
+    let hair = [61, 42, 29, 255];
+    let shirt = [26, 170, 165, 255];
+    let trousers = [51, 55, 137, 255];
+    paint(&mut skin, 0, 0, 32, 16, face);
+    paint(&mut skin, 0, 0, 32, 8, hair);
+    paint(&mut skin, 0, 8, 32, 2, hair);
+    // Eyes and mouth on the front face of the cube.
+    for (x, y, c) in [(9, 12, [239, 239, 236, 255]), (10, 12, [58, 65, 135, 255]),
+        (13, 12, [58, 65, 135, 255]), (14, 12, [239, 239, 236, 255]),
+        (11, 14, [84, 51, 37, 255]), (12, 14, [84, 51, 37, 255])] {
+        skin.put_pixel(x, y, Rgba(c));
+    }
+    paint(&mut skin, 16, 16, 24, 16, shirt);
+    paint(&mut skin, 0, 16, 16, 16, trousers);
+    paint(&mut skin, 16, 48, 16, 16, trousers);
+    for (x, y) in [(40, 16), (32, 48)] {
+        paint(&mut skin, x, y, 16, 16, face);
+        paint(&mut skin, x, y, 16, 8, shirt);
+    }
+    skin
+}
+
+/// Render a standalone three-dimensional cube with the same skin as the body.
+pub fn render_head(skin: &RgbaImage, size: u32) -> RgbaImage {
+    let side = size.clamp(16, 256);
+    let mut raster = Raster {
+        image: RgbaImage::new(side, side),
+        depth: vec![f32::INFINITY; (side * side) as usize],
+        camera: Camera { yaw: -25.0, pitch: -12.0, zoom: 3.4 },
+    };
+    raster.cuboid(skin, [0.0, 16.0, 0.0], [8.0, 8.0, 8.0], [0.0, 0.0], 0.0, false);
+    if skin.height() >= 64 {
+        raster.cuboid(skin, [0.0, 16.0, 0.0], [8.0, 8.0, 8.0], [32.0, 0.0], 0.5, false);
+    }
+    raster.image
+}
+
 struct Raster {
     image: RgbaImage,
     depth: Vec<f32>,
@@ -315,6 +366,19 @@ pub fn render(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn default_character_and_head_are_textured_and_head_uses_selected_skin() {
+        let skin = default_steve();
+        assert_eq!(skin.dimensions(), (64, 64));
+        let body = render(&skin, None, Model::Classic, Camera::default(), [160, 200]);
+        assert!(body.pixels().any(|p| p[3] > 0 && u16::from(p[1]) > u16::from(p[0]) * 2));
+        let head = render_head(&skin, 48);
+        assert!(head.pixels().filter(|p| p[3] > 0).count() > 100);
+        let mut changed = skin.clone();
+        for y in 0..16 { for x in 0..32 { changed.put_pixel(x, y, Rgba([255, 0, 0, 255])); } }
+        assert_ne!(head, render_head(&changed, 48));
+    }
+
     #[test]
     fn rotation_model_and_cape_change_the_actual_geometry() {
         let skin = mannequin();

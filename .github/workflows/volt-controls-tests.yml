@@ -1,0 +1,32 @@
+name: Volt control input tests
+on:
+  push:
+    branches: [arena/e973ac10-volt-plus]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  input-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Install native dependencies
+        run: sudo apt-get update && sudo apt-get install -y libwayland-dev libxkbcommon-dev libudev-dev
+      - name: Check pinned upstream sources
+        run: python3 -m unittest discover -s tests -p 'test_upstream_control_sources.py'
+      - name: Run input adapter tests
+        run: |
+          set -o pipefail
+          cargo test -p horizon-client-input --lib java_ 2>&1 | tee "$RUNNER_TEMP/control-tests.log"
+      - name: Summarize test errors
+        if: failure()
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          path = Path(os.environ['RUNNER_TEMP']) / 'control-tests.log'
+          if path.exists():
+              for line in path.read_text(errors='replace').splitlines()[-55:]:
+                  print('::notice::' + line[:400].replace('%', '%25'))
+          PY

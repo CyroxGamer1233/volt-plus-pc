@@ -2,6 +2,8 @@
 """Reject local game artifacts even when somebody uses git add -f."""
 
 import argparse
+import json
+from pathlib import Path
 from pathlib import PurePosixPath
 import subprocess
 import sys
@@ -13,6 +15,19 @@ ORIGINAL_JDK_TOOLS = {"tools/JfrSummary.java", "tests/java/JfrFixture.java"}
 ANDROID_RESULT_BRIDGE = "packaging/android/java/dev/horizon/android/HorizonActivity.java"
 ANDROID_DOCUMENTS_BRIDGE = "packaging/android/java/dev/horizon/android/HorizonDocumentsProvider.java"
 ANDROID_NATIVE_MODS_BRIDGE = "packaging/android/java/dev/horizon/android/NativeMods.java"
+# Original launcher-owned MediaPlayer / EGL bridge (not decompiled game code).
+ANDROID_INTRO_ACTIVITY = "packaging/android/java/dev/horizon/android/IntroActivity.java"
+ANDROID_WALLPAPER_BRIDGE = "packaging/android/java/dev/horizon/android/WallpaperPlayer.java"
+# Exact pinned upstream files, not a blanket exception for arbitrary Java or game code.
+_UPSTREAM_MANIFEST = Path(__file__).with_name("upstream_control_sources.json")
+UPSTREAM_CONTROL_JAVA = frozenset(
+    path for path in json.loads(_UPSTREAM_MANIFEST.read_text())["files"]
+    if path.endswith(".java") and path.startswith((
+        "third_party/pojav-control-engine/src/customcontrols/",
+        "third_party/pojav-control-engine/exp4j/src/main/java/",
+        "third_party/zalith-control-engine/InputMap/",
+    ))
+)
 
 
 def prohibited(path):
@@ -25,7 +40,7 @@ def prohibited(path):
     if any(part in {".local", ".gradle", "node_modules", "__pycache__"} for part in parsed.parts):
         return True
     # Original JDK-only tools are an exact allowlist; recovered game Java stays private.
-    if path in ORIGINAL_JDK_TOOLS or path in {ANDROID_RESULT_BRIDGE, ANDROID_DOCUMENTS_BRIDGE, ANDROID_NATIVE_MODS_BRIDGE}:
+    if path in ORIGINAL_JDK_TOOLS or path in UPSTREAM_CONTROL_JAVA or path in {ANDROID_RESULT_BRIDGE, ANDROID_DOCUMENTS_BRIDGE, ANDROID_NATIVE_MODS_BRIDGE, ANDROID_WALLPAPER_BRIDGE, ANDROID_INTRO_ACTIVITY}:
         return False
     # Original Horizon mod sources may also be tracked.
     if parsed.suffix == ".java" and path.startswith(("mods/horizon/src/", "mods/horizon-lab/src/")):

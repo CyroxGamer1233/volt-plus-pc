@@ -12,10 +12,10 @@ android {
     namespace 'dev.horizon.android'
     compileSdk 35
     defaultConfig {
-        applicationId providers.gradleProperty('appId').getOrElse('com.goydevv.horizon')
+        applicationId providers.gradleProperty('appId').getOrElse('vp.net.voltplus')
         minSdk providers.gradleProperty('minSdk').getOrElse('28').toInteger()
         targetSdk 35
-        versionCode providers.gradleProperty('devVersionCode').getOrElse('30').toInteger()
+        versionCode providers.gradleProperty('releaseVersionCode').orElse(providers.gradleProperty('devVersionCode')).getOrElse('30').toInteger()
         versionName '1.0.1' + (providers.gradleProperty('devVersionCode').isPresent() ? '-dev.' + providers.gradleProperty('devBuild').get() : '')
         ndk { abiFilters providers.gradleProperty('abi').get() }
     }
@@ -55,9 +55,16 @@ android {
         java.srcDirs = ['java']
         manifest.srcFile 'AndroidManifest.xml'
         jniLibs.srcDirs = ['../../.local/android/gradle-jni']
-        assets.srcDirs = ['../../.local/android/gradle-assets']
+        assets.srcDirs = ['../../.local/android/gradle-assets', 'media']
         res.srcDirs = ['res']
     }
+    androidResources { noCompress += ['mp4'] }
     packaging { jniLibs { useLegacyPackaging = true; keepDebugSymbols += '**/*.so' } }
 }
 layout.buildDirectory = file('../../.local/android/gradle-build')
+
+// This is an opt-in build probe, not a feature switch: there is no shipping
+// Java control overlay or editor yet. Do not enable in published APKs.
+if (providers.gradleProperty('experimentalJavaControls').orNull == 'true') {
+    dependencies { implementation project(':layer') }
+}

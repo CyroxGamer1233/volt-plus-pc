@@ -17,6 +17,8 @@ pub(super) struct StartupMenu {
     #[cfg(target_os = "android")]
     keyboard_focus: Option<horizon_client::widgets::Target>,
     #[cfg(target_os = "android")]
+    pub(super) control_input_unfocused: bool,
+    #[cfg(target_os = "android")]
     keyboard_navigation: bool,
     #[cfg(target_os = "android")]
     controller_edges: horizon_client::gamepad::Edges,
@@ -1039,7 +1041,7 @@ impl Loading {
     }
 
     #[cfg(target_os = "android")]
-    fn startup_dispatch_custom_token(
+    pub(super) fn startup_dispatch_custom_token(
         &mut self,
         event_loop: &dyn EventLoopCtl,
         token: &str,
@@ -1565,6 +1567,13 @@ impl Loading {
                 touch.location.x as f32 / b.scale,
                 touch.location.y as f32 / b.scale,
             ];
+            if waiting_for_key {
+                if touch.phase == TouchPhase::Ended {
+                    let changes = self.menu.options.touch_key_picker(&mut self.settings, (b.width, b.height), p[0], p[1]);
+                    self.menu_option_events(changes);
+                }
+                return Ok(());
+            }
             if let Some(gui) = self.gui.as_ref()
                 && let Some(hub_act) = self.menu.touch.floating_menu_touch(
                     &mut b,
@@ -2184,6 +2193,14 @@ impl Loading {
                 }
             }
             WindowEvent::Focused(false) => {
+                #[cfg(target_os = "android")]
+                {
+                    horizon_client::java_controls::release_tokens();
+                    for (token, down) in horizon_client::java_controls::drain_tokens() {
+                        self.startup_dispatch_custom_token(event_loop, token, down);
+                    }
+                    self.menu.control_input_unfocused = true;
+                }
                 self.menu.modifiers = ModifiersState::empty();
                 self.menu.physical_keys.clear();
                 self.menu.dragging = false;
@@ -2194,6 +2211,8 @@ impl Loading {
                 let events = self.menu.options.release();
                 self.menu_option_events(events);
             }
+            #[cfg(target_os = "android")]
+            WindowEvent::Focused(true) => self.menu.control_input_unfocused = false,
             WindowEvent::KeyboardInput { event, .. }
                 if event.state == ElementState::Pressed && self.menu.pending.is_some() =>
             {
@@ -2491,7 +2510,7 @@ impl Loading {
                     self.menu.controls.settings.virtual_mouse_pointer_scale,
                 );
             }
-            if !is_goy
+            if !waiting_for_key && !is_goy
                 && (!hud_in_menu
                     || self.menu.controls.settings.layouts
                         [self.menu.controls.settings.mode.index()]
@@ -2500,7 +2519,7 @@ impl Loading {
             {
                 self.menu.controls.draw(batch, &gui.atlas);
             }
-            horizon_client::touch_ui::draw_goy_hud(
+            if !waiting_for_key { horizon_client::touch_ui::draw_goy_hud(
                 &self.menu.controls,
                 batch,
                 &gui.atlas,
@@ -2511,6 +2530,7 @@ impl Loading {
             self.menu
                 .touch
                 .draw_floating_menu(batch, &gui.atlas, &self.menu.controls.settings);
+            }
         }
         self.menu
             .frame_graph

@@ -864,3 +864,81 @@ pub fn refresh_bounds() {
         }
     }
 }
+
+/// Whether the optional experimental control editor was included in this APK.
+pub fn zalith_studio_available() -> bool {
+    let Some(ui) = UI.get() else { return false; };
+    static AVAILABLE: OnceLock<bool> = OnceLock::new();
+    *AVAILABLE.get_or_init(|| {
+        let Ok(mut env) = ui.vm.attach_current_thread() else { return false; };
+        match env.call_method(&ui.activity, "hasZalithStudio", "()Z", &[]).and_then(|v| v.z()) {
+            Ok(value) => value,
+            Err(_) => { let _ = env.exception_clear(); false }
+        }
+    })
+}
+
+/// The Android activity checks the layout path is private and of the right type.
+pub fn open_zalith_studio(path: &std::path::Path) -> bool {
+    let Some(ui) = UI.get() else { return false; };
+    let Ok(mut env) = ui.vm.attach_current_thread() else { return false; };
+    let result = env.with_local_frame(8, |env| -> jni::errors::Result<bool> {
+        let path = JObject::from(env.new_string(path.to_string_lossy().as_ref())?);
+        env.call_method(&ui.activity, "openZalithStudio", "(Ljava/lang/String;)Z", &[JValue::Object(&path)])?.z()
+    });
+    match result { Ok(value) => value, Err(_) => { let _ = env.exception_clear(); false } }
+}
+
+/// Start or stop the wallpaper decoder; it performs GL/media work on its own looper.
+pub fn wallpaper_start(path: &std::path::Path, source: [u32; 2], output: [u32; 2]) -> Result<(), String> {
+    let ui = UI.get().ok_or("Android activity is not ready")?;
+    let mut env = ui.vm.attach_current_thread().map_err(|e| e.to_string())?;
+    let result = env.with_local_frame(8, |env| -> jni::errors::Result<()> {
+        let path = JObject::from(env.new_string(path.to_string_lossy().as_ref())?);
+        env.call_method(&ui.activity, "startWallpaper", "(Ljava/lang/String;IIII)V",
+            &[JValue::Object(&path), JValue::Int(source[0] as i32), JValue::Int(source[1] as i32),
+              JValue::Int(output[0] as i32), JValue::Int(output[1] as i32)])?;
+        Ok(())
+    });
+    if result.is_err() { let _ = env.exception_clear(); }
+    result.map_err(|e| e.to_string())
+}
+
+pub fn wallpaper_stop() {
+    if let Some(ui) = UI.get() && let Ok(mut env) = ui.vm.attach_current_thread() {
+        if env.call_method(&ui.activity, "stopWallpaper", "()V", &[]).is_err() { let _ = env.exception_clear(); }
+    }
+}
+
+/// Copy one native-resolution frame while the decoder's single buffer is held.
+pub fn wallpaper_frame(expected: usize, recycled: &mut Vec<u8>) -> Option<Vec<u8>> {
+    let ui = UI.get()?;
+    let mut env = ui.vm.attach_current_thread().ok()?;
+    let result = env.with_local_frame(8, |env| -> jni::errors::Result<Option<Vec<u8>>> {
+        let obj = env.call_method(&ui.activity, "acquireWallpaperFrame", "()Ljava/nio/ByteBuffer;", &[])?.l()?;
+        if obj.is_null() { return Ok(None); }
+        let buffer = jni::objects::JByteBuffer::from(obj);
+        let copy = match (env.get_direct_buffer_address(&buffer), env.get_direct_buffer_capacity(&buffer)) {
+            (Ok(address), Ok(capacity)) if capacity == expected && expected <= 40_000_000 => {
+                // The decoder cannot mutate the direct buffer until releaseWallpaperFrame.
+                recycled.resize(capacity, 0);
+                recycled.copy_from_slice(unsafe { std::slice::from_raw_parts(address, capacity) });
+                Some(std::mem::take(recycled))
+            }
+            _ => None,
+        };
+        env.call_method(&ui.activity, "releaseWallpaperFrame", "()V", &[])?;
+        Ok(copy)
+    });
+    match result { Ok(frame) => frame, Err(_) => { let _ = env.exception_clear(); None } }
+}
+
+pub fn wallpaper_status() -> Option<String> {
+    let ui = UI.get()?;
+    let mut env = ui.vm.attach_current_thread().ok()?;
+    let result = env.with_local_frame(8, |env| -> jni::errors::Result<String> {
+        let obj = env.call_method(&ui.activity, "wallpaperStatus", "()Ljava/lang/String;", &[])?.l()?;
+        Ok(env.get_string(&jni::objects::JString::from(obj))?.into())
+    });
+    match result { Ok(status) => Some(status), Err(_) => { let _ = env.exception_clear(); None } }
+}

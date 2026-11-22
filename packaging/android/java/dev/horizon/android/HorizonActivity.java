@@ -7,13 +7,15 @@ public final class HorizonActivity extends android.app.NativeActivity {
             "b83e95a3ff2ff82509300f132506d61b1ca3572a61e80b8588f8be815f7b9b05";
     private boolean loaded;
     private java.io.File nativeLibrary;
-
     private static volatile boolean sCancelFolderCopy = false;
     private static volatile int sCopyFilesDone = 0;
     private static volatile int sCopyFilesTotal = 0;
     private static volatile String sCopyCurrentFile = "";
 
     private native void nativeDocumentResult(int request, int result, String uri);
+    // Native methods are registered against the actual loaded game library.
+    public native boolean nativeControlInput(String kind, String key, boolean pressed);
+    public native void nativeControlReset();
 
     public static void cancelFolderCopy() {
         sCancelFolderCopy = true;
@@ -21,6 +23,54 @@ public final class HorizonActivity extends android.app.NativeActivity {
 
     public static String getFolderCopyProgress() {
         return sCopyFilesDone + "|" + sCopyFilesTotal + "|" + (sCopyCurrentFile != null ? sCopyCurrentFile : "");
+    }
+
+    // These methods may be called from the Rust render thread. All decoder/GL
+    // operations are posted to WallpaperPlayer's dedicated looper.
+    public void startWallpaper(String path, int sourceWidth, int sourceHeight, int width, int height) {
+        WallpaperPlayer.get().start(path, sourceWidth, sourceHeight, width, height);
+    }
+    public void stopWallpaper() { WallpaperPlayer.get().stop(); }
+    public java.nio.ByteBuffer acquireWallpaperFrame() { return WallpaperPlayer.get().acquire(); }
+    public void releaseWallpaperFrame() { WallpaperPlayer.get().releaseFrame(); }
+    public String wallpaperStatus() { return WallpaperPlayer.get().status(); }
+
+    // Optional experimental editor module. Default builds deliberately omit it.
+    public boolean hasZalithStudio() {
+        try {
+            Class.forName("dev.horizon.android.control.ZalithStudioActivity", false, getClassLoader());
+            return true;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    public boolean openZalithStudio(final String layoutPath) {
+        if (layoutPath == null || !hasZalithStudio()) return false;
+        try {
+            final Class<?> studio = Class.forName("dev.horizon.android.control.ZalithStudioActivity", false, getClassLoader());
+            final android.content.Intent intent = new android.content.Intent(this, studio);
+            intent.putExtra("layout_path", layoutPath);
+            intent.putExtra("choose_layout", true);
+            runOnUiThread(new Runnable() {
+                @Override public void run() {
+                    try { startActivity(intent); }
+                    catch (Throwable error) {
+                        android.util.Log.e("VoltJavaControls", "Could not start experimental studio", error);
+                        android.widget.Toast.makeText(HorizonActivity.this, "Could not open Java Control Studio", android.widget.Toast.LENGTH_LONG).show();
+                    }
+                }
+            });
+            return true;
+        } catch (Throwable error) {
+            android.util.Log.w("VoltJavaControls", "Experimental studio unavailable", error);
+            return false;
+        }
+    }
+
+    @Override protected void onPause() {
+        WallpaperPlayer.get().stop();
+        super.onPause();
     }
 
     @Override protected void onCreate(android.os.Bundle savedInstanceState) {
