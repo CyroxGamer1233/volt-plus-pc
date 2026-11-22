@@ -254,9 +254,12 @@ impl InputQueue {
         }
     }
     pub fn release_all(&mut self) {
-        for key in std::mem::take(&mut self.counts).into_keys() {
-            self.pending.push_back((key, false));
-        }
+        // Suppress undelivered presses as well as releases. Only keys already
+        // seen by the consumer need a release; this avoids activating controls
+        // after the window has lost focus and keeps the queue bounded.
+        self.counts.clear();
+        self.pending.clear();
+        self.pending.extend(self.delivered.iter().copied().map(|key| (key, false)));
     }
     pub fn drain(&mut self) -> Vec<(&'static str, bool)> {
         let edges: Vec<_> = self.pending.drain(..).collect();
@@ -317,6 +320,18 @@ mod tests {
         q.release_all();
         assert_eq!(q.drain(), vec![("key.keyboard.w", false)]);
         q.send("key.keyboard.w", false);
+        assert!(q.drain().is_empty());
+    }
+    #[test]
+    fn focus_loss_discards_undelivered_presses_but_releases_delivered_keys() {
+        let mut q = InputQueue::default();
+        q.send("key.keyboard.w", true);
+        assert_eq!(q.drain(), vec![("key.keyboard.w", true)]);
+        q.send("key.keyboard.w", false);
+        q.send("key.keyboard.a", true);
+        q.release_all();
+        assert_eq!(q.drain(), vec![("key.keyboard.w", false)]);
+        q.send("key.keyboard.a", false);
         assert!(q.drain().is_empty());
     }
     #[test]
