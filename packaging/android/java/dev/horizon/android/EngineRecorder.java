@@ -56,8 +56,14 @@ final class EngineRecorder {
         return surface;
     }
 
+    /** Taking frames right now. */
     static synchronized boolean busy() {
         return started && !stopping;
+    }
+
+    /** Holds the encoder, whether or not it still takes frames (it finalises the file). */
+    static synchronized boolean active() {
+        return started;
     }
 
     /**
@@ -126,36 +132,65 @@ final class EngineRecorder {
         return "recording;" + width + "x" + height;
     }
 
-    /** Ends the recording; the file is finalised before this returns. */
-    static synchronized String stop() {
-        if (!started) {
-            return "idle;nothing is recording";
+    /**
+     * Ends the recording. The encoder is finalised on its own thread and the overlay hears
+     * {@code saved} when the file is whole: the game must not wait for a codec.
+     */
+    static String stop() {
+        synchronized (EngineRecorder.class) {
+            if (!started) {
+                return "idle;nothing is recording";
+            }
+            if (stopping) {
+                return "stopping;finishing the file";
+            }
+            stopping = true;
         }
-        stopping = true;
-        try {
-            codec.signalEndOfInputStream();
-        } catch (Throwable ignored) {
+        Thread finisher = new Thread(EngineRecorder::finish, "Volt engine recorder stop");
+        finisher.setDaemon(true);
+        finisher.start();
+        return "stopping;finishing the file";
+    }
+
+    /** Drains the last frames, closes the codec and finalises the MP4. Never on the game. */
+    private static void finish() {
+        MediaCodec encoder;
+        Thread worker;
+        synchronized (EngineRecorder.class) {
+            encoder = codec;
+            worker = drain;
+            drain = null;
         }
-        Thread thread = drain;
-        drain = null;
-        if (thread != null && thread != Thread.currentThread()) {
+        if (encoder != null) {
             try {
-                thread.join(1500);
+                encoder.signalEndOfInputStream();
+            } catch (Throwable ignored) {
+            }
+        }
+        // Let the drain thread take the last frames before the encoder goes away.
+        if (worker != null && worker != Thread.currentThread()) {
+            try {
+                worker.join(3000);
             } catch (InterruptedException ignored) {
                 Thread.currentThread().interrupt();
             }
         }
-        try {
-            codec.stop();
-        } catch (Throwable ignored) {
+        Surface input;
+        synchronized (EngineRecorder.class) {
+            codec = null;
+            input = surface;
+            surface = null;
         }
-        try {
-            codec.release();
-        } catch (Throwable ignored) {
+        if (encoder != null) {
+            try {
+                encoder.stop();
+            } catch (Throwable ignored) {
+            }
+            try {
+                encoder.release();
+            } catch (Throwable ignored) {
+            }
         }
-        codec = null;
-        Surface input = surface;
-        surface = null;
         if (input != null) {
             try {
                 input.release();
@@ -167,8 +202,10 @@ final class EngineRecorder {
         String uri = target == null ? "" : target.toString();
         boolean empty = written == 0L;
         closeTarget();
-        started = false;
-        stopping = false;
+        synchronized (EngineRecorder.class) {
+            started = false;
+            stopping = false;
+        }
         if (empty) {
             // Nothing reached the encoder: say so rather than hand over an empty file.
             ScreenRecorder.publish(
@@ -177,7 +214,7 @@ final class EngineRecorder {
                     0L,
                     0L,
                     "no frames reached the encoder: this device would not record the game's own surface");
-            return "error;no frames reached the encoder";
+            return;
         }
         ScreenRecorder.publish(
                 "saved",
@@ -185,12 +222,14 @@ final class EngineRecorder {
                 size,
                 startedAt,
                 finished ? "" : "the recording may be incomplete");
-        return "saved;";
     }
 
     /** The drain loop: encoder output to the muxer, until the end of the stream. */
     private static void drain() {
-        MediaCodec encoder = codec;
+        MediaCodec encoder;
+        synchronized (EngineRecorder.class) {
+            encoder = codec;
+        }
         MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
         if (encoder == null) {
             return;
@@ -259,21 +298,23 @@ final class EngineRecorder {
 
     private static boolean finishMuxer() {
         boolean ok = false;
-        try {
-            if (muxer != null && track >= 0) {
-                muxer.stop();
-                ok = true;
+        synchronized (EngineRecorder.class) {
+            try {
+                if (muxer != null && track >= 0) {
+                    muxer.stop();
+                    ok = true;
+                }
+            } catch (Throwable ignored) {
             }
-        } catch (Throwable ignored) {
-        }
-        try {
-            if (muxer != null) {
-                muxer.release();
+            try {
+                if (muxer != null) {
+                    muxer.release();
+                }
+            } catch (Throwable ignored) {
             }
-        } catch (Throwable ignored) {
+            muxer = null;
+            track = -1;
         }
-        muxer = null;
-        track = -1;
         return ok;
     }
 

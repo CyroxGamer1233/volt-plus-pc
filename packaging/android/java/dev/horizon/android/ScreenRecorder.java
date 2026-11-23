@@ -97,7 +97,7 @@ public final class ScreenRecorder {
 
     /** Whether any recording is running: the display's, or the game's own frames. */
     static boolean busy() {
-        return RecorderService.busy() || EngineRecorder.busy();
+        return RecorderService.busy() || EngineRecorder.active();
     }
 
     /**
@@ -254,7 +254,7 @@ public final class ScreenRecorder {
             state = "idle";
             return "idle;nothing is recording";
         }
-        if (EngineRecorder.busy()) {
+        if (EngineRecorder.active()) {
             state = "stopping";
             return EngineRecorder.stop();
         }
