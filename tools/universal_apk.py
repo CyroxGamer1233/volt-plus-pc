@@ -78,16 +78,19 @@ def merge(primary: Path, secondary: Path, out: Path) -> tuple[list[str], list[st
 def align_and_sign(apk: Path, build_tools: Path, keystore: str, password: str, alias: str, key_password: str) -> None:
     """zipalign then apksigner, v1 + v2 + v3, so every Android version accepts it."""
     align = build_tools / "zipalign"
+    wrapper = build_tools / "apksigner"
     signer = build_tools / "lib" / "apksigner.jar"
-    if not align.is_file() or not signer.is_file():
+    if not align.is_file() or not (wrapper.is_file() or signer.is_file()):
         raise SystemExit(f"build-tools at {build_tools} lacks zipalign or apksigner")
+    # The wrapper script sets up the JVM the way the SDK expects; the jar is the fallback.
+    launcher = [str(wrapper)] if wrapper.is_file() else ["java", "-jar", str(signer)]
     with tempfile.TemporaryDirectory() as directory:
         aligned = Path(directory) / apk.name
         subprocess.run([str(align), "-p", "-f", "4", str(apk), str(aligned)], check=True)
         shutil.copyfile(aligned, apk)
     subprocess.run(
         [
-            "java", "-jar", str(signer), "sign",
+            *launcher, "sign",
             "--ks", keystore,
             "--ks-pass", f"env:HORIZON_ANDROID_KEYSTORE_PASSWORD",
             "--ks-key-alias", alias,
@@ -99,17 +102,17 @@ def align_and_sign(apk: Path, build_tools: Path, keystore: str, password: str, a
         ],
         check=True,
     )
-    output = subprocess.run(
-        ["java", "-jar", str(signer), "verify", "--verbose", "--print-certs", str(apk)],
-        check=True, capture_output=True, text=True,
-    ).stdout
-    print(output)
-    if "Verified using v1 scheme (JAR signing): true" not in output:
-        raise SystemExit("universal APK is not v1 signed")
-    if "Verified using v2 scheme (APK Signature Scheme v2): true" not in output:
-        raise SystemExit("universal APK is not v2 signed")
-    if "Verified using v3 scheme (APK Signature Scheme v3): true" not in output:
-        raise SystemExit("universal APK is not v3 signed")
+    verified = subprocess.run(
+        [*launcher, "verify", "--verbose", "--print-certs", str(apk)],
+        capture_output=True, text=True,
+    )
+    print(verified.stdout, verified.stderr)
+    # apksigner exits non-zero when any scheme it was asked for is missing.
+    if verified.returncode != 0:
+        raise SystemExit(f"universal APK did not verify: exit {verified.returncode}")
+    for scheme in ("v1 scheme (JAR signing)", "v2 scheme (APK Signature Scheme v2)", "v3 scheme (APK Signature Scheme v3)"):
+        if f"Verified using {scheme}: true" not in verified.stdout:
+            raise SystemExit(f"universal APK is not {scheme.split()[0]} signed")
 
 
 def main() -> int:
@@ -124,6 +127,10 @@ def main() -> int:
         if not apk.is_file():
             parser.error(f"{apk} does not exist")
     options.out.parent.mkdir(parents=True, exist_ok=True)
+    for apk in (options.arm64, options.armv7):
+        with zipfile.ZipFile(apk) as archive:
+            dirs = sorted({abi_of(name) for name in archive.namelist() if is_library(name)})
+        print(f"{apk.name}: {apk.stat().st_size:,} bytes, library ABIs {dirs}")
     entries, added = merge(options.arm64, options.armv7, options.out)
     abis = sorted({abi_of(name) for name in entries if is_library(name)})
     print(f"{options.out}: {len(entries)} entries, {len(added)} libraries added, ABIs {abis}")
