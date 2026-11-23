@@ -21365,6 +21365,9 @@ pub fn run() -> Result<()> {
             || options.offscreen
             || options.frames.is_some()
             || options.world_frames.is_some();
+        // The phone publishes through Discord's own service; the desktop, through its socket.
+        #[cfg(target_os = "android")]
+        crate::discord_presence_android::install(automated);
         horizon_client::discord_presence::start(early_settings.extras.discord_presence, automated);
     }
     // Snapshots of derived tables live in the game folder, never beside the

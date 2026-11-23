@@ -266,10 +266,20 @@ only talk to a fake Discord: `lab.game_env` sets `HORIZON_NO_DISCORD=1`, and
 paths; a LAN host and guest; the switch; a Discord started after the game).
 `DISCORD_APP_ID` is Discord's "Volt+" application; its Rich Presence assets are
 `volt` (the large logo) and `overworld`, `nether`, `end` (the small dimension
-pictures), uploaded under those names in the developer portal. Discord offers
-no Rich Presence to apps on a phone — the mobile client has no IPC socket — so
-the card appears from the desktop build of the client, not from the Android
-one, which is why the switch is on but silent there.
+pictures), uploaded under those names in the developer portal.
+
+On a phone there is no Discord IPC socket, but the Discord Android app does
+publish presence for other apps through a bound service
+(`com.discord.socialsdk.rpc.IDiscordRpcService`, the transport its own Social
+SDK uses). The Android build binds it instead of opening a socket:
+`crates/horizon-client/src/android/discord.rs` hands the same card to
+`dev.horizon.android.DiscordPresence` (three AIDL files under
+`packaging/android/aidl`), which connects with the application id and posts
+Discord's RPC frames on the main looper, so the game never waits for a Discord
+that is slow, missing or updating. The phone's card is the Social SDK's richer
+shape: it names the app ("Playing Volt+"), links both text lines and the logo
+to the download page, and takes the logo as a plain address, so a card is
+detailed without any asset upload.
 
 ### Play on another of your machines
 

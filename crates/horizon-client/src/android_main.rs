@@ -56,6 +56,8 @@ mod native_ime;
 mod performance;
 #[path = "android/platform.rs"]
 mod platform;
+#[path = "android/discord.rs"]
+mod discord_presence_android;
 #[path = "android/recorder.rs"]
 mod screen_record;
 #[rustfmt::skip]

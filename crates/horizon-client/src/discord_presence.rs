@@ -29,6 +29,9 @@ const VERSION: &str = "1.0.1";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Where the button on the card leads.
 const DOWNLOAD_URL: &str = "https://github.com/entitybrian69-bit/volt-plus";
+/// The logo the phone's card shows: a picture address Discord fetches itself, pinned to the
+/// commit that added it so it cannot change under the card.
+const LOGO_URL: &str = "https://raw.githubusercontent.com/entitybrian69-bit/volt-plus/ed65ec90fad334947e1dd12825e74569e7ed7749/packaging/android/res/drawable-nodpi/launcher_icon.png";
 /// The Rich Presence assets the card draws, by the names they must be uploaded under in the
 /// developer portal: the square logo, and one 512x512 picture a dimension.
 const LOGO_ASSET: &str = "volt";
@@ -129,10 +132,43 @@ static THREAD: OnceLock<Thread> = OnceLock::new();
 /// When this session started, so the card counts time played in the menus too.
 static SESSION: OnceLock<u64> = OnceLock::new();
 
+/// The platform's own transport, when it has one: the Android app publishes through Discord's
+/// bound service, since a phone has no desktop IPC socket to talk to.
+#[derive(Clone, Copy)]
+pub struct Sink {
+    pub publish: fn(&str),
+    pub clear: fn(),
+}
+static SINK: OnceLock<Sink> = OnceLock::new();
+
+/// Hands the card to the platform instead of the desktop's socket. Called once, by the Android
+/// app before [`start`]; the desktop never installs one.
+pub fn use_platform(sink: Sink) {
+    if SINK.set(sink).is_err() {
+        return;
+    }
+    // Nothing has been published yet, so the first status the game reports must reach the
+    // platform even when it is the one a fresh session starts in.
+    lock().wanted = Wanted {
+        status: Status::Off,
+        since: None,
+    };
+}
+
+/// Whether cards go through the platform's transport.
+pub fn on_platform() -> bool {
+    SINK.get().is_some()
+}
+
 /// Starts the presence thread, once: when the game starts, never for a dedicated server.
 /// `automated` runs (offscreen, benchmarks) only talk to a test's fake Discord.
 pub fn start(enabled: bool, automated: bool) {
     let _ = SESSION.set(unix_now());
+    // A phone has no Discord IPC socket: its cards go through the platform's sink, so the
+    // thread below would only retry a socket that never exists.
+    if cfg!(target_os = "android") {
+        return;
+    }
     let fake_discord = std::env::var_os(IPC_DIR_ENV).is_some();
     if THREAD.get().is_some()
         || std::env::var_os("HORIZON_NO_DISCORD").is_some_and(|v| v != "0")
@@ -154,8 +190,24 @@ pub fn start(enabled: bool, automated: bool) {
     }
 }
 
-/// What the player does now; only a change wakes the thread. Free without [`start`].
+/// What the player does now; only a change is published. Free without [`start`] or a sink.
 pub fn set(status: Status) {
+    if let Some(sink) = SINK.get() {
+        // The platform publishes a whole card per change; the desktop thread wakes instead.
+        let wanted = {
+            let mut shared = lock();
+            if !shared.wanted.update(status, unix_now()) {
+                return;
+            }
+            shared.wanted
+        };
+        let session = SESSION.get().copied().unwrap_or(0);
+        match platform_activity(wanted.status, wanted.since, session) {
+            Some(card) => (sink.publish)(&card.to_string()),
+            None => (sink.clear)(),
+        }
+        return;
+    }
     let Some(thread) = THREAD.get() else {
         return;
     };
@@ -166,6 +218,10 @@ pub fn set(status: Status) {
 
 /// On quit: clears the activity, waiting at most a moment for Discord.
 pub fn stop() {
+    if let Some(sink) = SINK.get() {
+        (sink.clear)();
+        return;
+    }
     let Some(thread) = THREAD.get() else {
         return;
     };
@@ -253,46 +309,7 @@ fn run() {
 /// text, two pictures with their own tooltip, a start time (so it counts up), a party size and
 /// two buttons: all of them are used, and every line stays under Discord's 128 characters.
 fn activity(status: Status, since: Option<u64>, session: u64) -> Option<Value> {
-    let (details, state, place, start, party) = match status {
-        Status::Off => return None,
-        Status::Menus => (
-            format!("In the {PRODUCT} launcher"),
-            format!("{PRODUCT} {VERSION} • {}", platform()),
-            None,
-            session,
-            None,
-        ),
-        Status::World {
-            play,
-            dimension,
-            mode,
-        } => {
-            let place = place_name(dimension);
-            let mode = mode_name(mode);
-            let details = match play {
-                Play::Singleplayer => format!("{mode} • Singleplayer"),
-                Play::Multiplayer { players: 0 } => format!("{mode} • Multiplayer"),
-                Play::Multiplayer { players } => format!("{mode} • Multiplayer, {players} online"),
-                Play::Hosting { .. } => format!("{mode} • LAN world"),
-            };
-            let max = crate::lan::MAX_PLAYERS;
-            let state = match play {
-                Play::Hosting { players } => format!("{place} • {players} of {max} players"),
-                _ => place.to_owned(),
-            };
-            let party = match play {
-                Play::Hosting { players } => Some(players.clamp(1, max)),
-                _ => None,
-            };
-            (
-                details,
-                state,
-                Some(dimension),
-                since.unwrap_or(session),
-                party,
-            )
-        }
-    };
+    let (details, state, place, start, party) = card_lines(status, since, session)?;
     let mut assets = json!({
         "large_image": LOGO_ASSET,
         "large_text": format!("{PRODUCT} {VERSION}"),
@@ -318,6 +335,81 @@ fn activity(status: Status, since: Option<u64>, session: u64) -> Option<Value> {
         });
     }
     Some(a)
+}
+
+/// The card the phone's Discord app shows: the Social SDK's own shape, whose pictures and
+/// clickable lines take plain addresses, so a card is detailed without uploading any asset.
+fn platform_activity(status: Status, since: Option<u64>, session: u64) -> Option<Value> {
+    let (details, state, _place, start, party) = card_lines(status, since, session)?;
+    let mut a = json!({
+        // "Playing Volt+": the card is the app's, so its name is the product's.
+        "name": PRODUCT,
+        "type": 0,
+        "status_display_type": 0,
+        "details": short(&details),
+        "state": short(&state),
+        "details_url": DOWNLOAD_URL,
+        "state_url": DOWNLOAD_URL,
+        "assets": {
+            "large_image": LOGO_URL,
+            "large_text": format!("{PRODUCT} {VERSION}"),
+            "large_url": DOWNLOAD_URL,
+        },
+        "buttons": [{"label": format!("Get {PRODUCT}"), "url": DOWNLOAD_URL}],
+    });
+    if start > 0 {
+        a["timestamps"] = json!({"start": start});
+    }
+    if let Some(players) = party {
+        a["party"] = json!({
+            "id": format!("volt-{}", std::process::id()),
+            "size": [players, crate::lan::MAX_PLAYERS],
+        });
+    }
+    Some(a)
+}
+
+/// The two lines, the dimension, the clock and the party a card is made of; `None` when the
+/// card must be cleared. Both transports share it, so they can never say different things.
+fn card_lines(
+    status: Status,
+    since: Option<u64>,
+    session: u64,
+) -> Option<(String, String, Option<Dimension>, u64, Option<usize>)> {
+    match status {
+        Status::Off => None,
+        Status::Menus => Some((
+            format!("In the {PRODUCT} launcher"),
+            format!("{PRODUCT} {VERSION} • {}", platform()),
+            None,
+            session,
+            None,
+        )),
+        Status::World {
+            play,
+            dimension,
+            mode,
+        } => {
+            let place = place_name(dimension);
+            let mode = mode_name(mode);
+            let details = match play {
+                Play::Singleplayer => format!("{mode} • Singleplayer"),
+                Play::Multiplayer { players: 0 } => format!("{mode} • Multiplayer"),
+                Play::Multiplayer { players } => format!("{mode} • Multiplayer, {players} online"),
+                Play::Hosting { .. } => format!("{mode} • LAN world"),
+            };
+            let max = crate::lan::MAX_PLAYERS;
+            let state = match play {
+                Play::Hosting { players } => format!("{place} • {players} of {max} players"),
+                _ => place.to_owned(),
+            };
+            let party = match play {
+                Play::Hosting { players } => Some(players.clamp(1, max)),
+                _ => None,
+            };
+            Some((details, state, Some(dimension), since.unwrap_or(session), party))
+        }
+    }
 }
 
 /// Discord drops anything past 128 characters, and a cut line looks like a bug.
@@ -642,6 +734,40 @@ mod tests {
         assert_eq!(host["state"], "In the Overworld • 3 of 8 players");
         assert_eq!(host["party"]["size"], json!([3, 8]));
         assert_eq!(host["party"]["id"], format!("volt-{}", std::process::id()));
+    }
+
+    /// The phone's card is the Social SDK's: it names the app, links its lines and takes a
+    /// plain address for the picture, so nothing has to be uploaded to the portal.
+    #[test]
+    fn the_phones_card_links_everything_and_says_the_same_thing() {
+        let card = platform_activity(
+            world(Play::Hosting { players: 2 }, Dimension::Nether),
+            Some(40),
+            900,
+        )
+        .unwrap();
+        assert_eq!(card["name"], "Volt+");
+        assert_eq!(card["details"], "Survival • LAN world");
+        assert_eq!(card["state"], "In the Nether • 2 of 8 players");
+        assert_eq!(card["timestamps"]["start"], 40);
+        assert_eq!(card["party"]["size"], json!([2, 8]));
+        let logo = card["assets"]["large_image"].as_str().unwrap();
+        assert!(logo.starts_with("https://"), "{logo}");
+        assert_eq!(card["assets"]["large_text"], format!("Volt+ {VERSION}"));
+        assert_eq!(card["assets"]["large_url"], DOWNLOAD_URL);
+        assert_eq!(card["details_url"], DOWNLOAD_URL);
+        assert_eq!(card["state_url"], DOWNLOAD_URL);
+        assert_eq!(card["buttons"][0]["url"], DOWNLOAD_URL);
+        assert_eq!(platform_activity(Status::Off, None, 900), None);
+        // Both transports agree on the words.
+        let desktop = activity(
+            world(Play::Hosting { players: 2 }, Dimension::Nether),
+            Some(40),
+            900,
+        )
+        .unwrap();
+        assert_eq!(desktop["details"], card["details"]);
+        assert_eq!(desktop["state"], card["state"]);
     }
 
     #[test]
