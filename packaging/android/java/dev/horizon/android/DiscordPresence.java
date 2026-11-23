@@ -72,6 +72,8 @@ final class DiscordPresence {
     /** Why presence is not showing, for the one toast and the log. */
     private static String reason = "";
     private static boolean explained;
+    /** Whether the player has already been told the card is up. Said once, like a failure. */
+    private static boolean announced;
 
     private DiscordPresence() {}
 
@@ -243,6 +245,7 @@ final class DiscordPresence {
             return;
         }
         flush(cardFrame(activity));
+        announceOnce();
     }
 
     /** The card without the fields a client refused: first the party and button, then more. */
@@ -338,6 +341,27 @@ final class DiscordPresence {
             }
             bound = false;
         }
+    }
+
+    /**
+     * Confirms, once, that Discord took the card. Without it a working presence and a
+     * silently ignored one look identical from this side of the screen.
+     */
+    private static void announceOnce() {
+        if (announced || app == null) {
+            return;
+        }
+        announced = true;
+        String text = level == 0 ? "Discord presence is live" : "Discord presence is live (limited card)";
+        Log.i(TAG, text);
+        MAIN.post(
+                () -> {
+                    try {
+                        Toast.makeText(app, text, Toast.LENGTH_LONG).show();
+                    } catch (Throwable ignored) {
+                        // No looper for a toast; the log carries it.
+                    }
+                });
     }
 
     /** One toast per session: a switch that does nothing is worse than a sentence. */

@@ -27,7 +27,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        abi: ${{ fromJSON(inputs.all_abis && '["arm64-v8a","armeabi-v7a","x86","x86_64"]' || '["arm64-v8a"]') }}
+        abi: ${{ fromJSON(inputs.all_abis && '["arm64-v8a","armeabi-v7a","x86","x86_64"]' || '["arm64-v8a","armeabi-v7a"]') }}
     env:
       CARGO_BUILD_JOBS: '2'
       CARGO_PROFILE_DEV_DEBUG: '0'
@@ -260,6 +260,96 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: volt-plus-${{ github.run_number }}-${{ matrix.abi }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Remove signing key
+        if: always()
+        run: rm -f .local/android/ci.keystore .local/android/debug.keystore
+
+  # One APK for phones that do not know their own ABI: both architectures inside, signed
+  # with the same identity so it updates in place over either per-architecture build.
+  universal:
+    needs: build
+    if: needs.build.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          persist-credentials: false
+      - name: Restore the CI signing identity
+        env:
+          RELEASE_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          python3 - <<'PY'
+          import base64, os
+          from pathlib import Path
+          value = ''.join(os.environ.get('RELEASE_KEYSTORE', '').split())
+          password = os.environ.get('RELEASE_KEYSTORE_PASSWORD', '')
+          alias = os.environ.get('RELEASE_KEY_ALIAS', '')
+          key_password = os.environ.get('RELEASE_KEY_PASSWORD', '') or password
+          if not (value and password and alias):
+              raise SystemExit('Missing the release signing secrets')
+          path = Path('.local/android/ci.keystore')
+          path.parent.mkdir(parents=True, exist_ok=True)
+          path.write_bytes(base64.b64decode(value, validate=True))
+          path.chmod(0o600)
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as env:
+              env.write(f'HORIZON_ANDROID_KEYSTORE={path.resolve()}\n')
+              env.write(f'HORIZON_ANDROID_KEYSTORE_PASSWORD={password}\n')
+              env.write(f'HORIZON_ANDROID_KEY_ALIAS={alias}\n')
+              env.write(f'HORIZON_ANDROID_KEY_PASSWORD={key_password}\n')
+          PY
+      - name: Install Android build tools
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [[ ! -x "$sdkmanager" ]]; then
+            sdkmanager=$(find "$ANDROID_HOME/cmdline-tools" -type f -path '*/bin/sdkmanager' | sort -V | tail -n 1)
+          fi
+          test -x "$sdkmanager"
+          "$sdkmanager" --sdk_root="$ANDROID_HOME" 'build-tools;35.0.0'
+      - name: Download both architecture builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download "$GITHUB_RUN_ID" --pattern 'volt-plus-*-arm*' --dir apks --repo "$GITHUB_REPOSITORY"
+      - name: Merge them into one APK and sign it
+        run: |
+          arm64=$(find apks -path '*arm64-v8a*' -name '*.apk' | head -n 1)
+          armv7=$(find apks -path '*armeabi-v7a*' -name '*.apk' | head -n 1)
+          test -n "$arm64" && test -n "$armv7"
+          mkdir -p dist
+          python3 tools/universal_apk.py --arm64 "$arm64" --armv7 "$armv7" \
+            --out "dist/Volt-Plus.${GITHUB_RUN_NUMBER}.${GITHUB_SHA:0:12}-universal.apk" \
+            --build-tools "$ANDROID_HOME/build-tools/35.0.0" --sign
+      - name: Checksums, notices and summary
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, shutil
+          from pathlib import Path
+          out = Path('dist')
+          apk = next(out.glob('*universal.apk'))
+          digest = hashlib.sha256(apk.read_bytes()).hexdigest()
+          (out / 'SHA256SUMS.txt').write_text(f'{digest}  {apk.name}\n')
+          for source, dest in [('LICENSE', 'LICENSE.txt'), ('THIRD_PARTY_NOTICES.md', 'THIRD_PARTY_NOTICES.md')]:
+              shutil.copyfile(source, out / dest)
+          (out / 'BUILD.json').write_text(json.dumps({
+              'commit': os.environ['GITHUB_SHA'], 'abi': 'universal', 'profile': 'release',
+              'package': 'vp.net.voltplus', 'experimental': True,
+              'sha256': digest,
+              'run': f'https://github.com/{os.environ["GITHUB_REPOSITORY"]}/actions/runs/{os.environ["GITHUB_RUN_ID"]}',
+          }, indent=2) + '\n')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write(f'### Volt Plus APK: universal\n\n`{apk.name}` — {apk.stat().st_size:,} bytes\n\n'
+                            f'SHA-256: `{digest}`\n\nRuns on both arm64-v8a and armeabi-v7a devices.\n')
+          print(f'{apk.name} {apk.stat().st_size} bytes {digest}')
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: volt-plus-${{ github.run_number }}-universal
           path: dist/
           if-no-files-found: error
           retention-days: 14
