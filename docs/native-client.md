@@ -245,10 +245,13 @@ presentation, so `bench` reports what is on screen.
 ### Discord Rich Presence
 
 While Discord runs on the same computer, the player's Discord profile shows
-"Playing Horizon" and what they are doing: "In the menus", "Singleplayer",
-"Multiplayer" or "Hosting a world" (with the party size, of 8), the dimension
-("In the Nether") and the time since they entered the world. It never shows a
-world's name or a server's address. Horizon Settings has the switch
+"Playing Volt+" and what they are doing, as detailed as Discord's card allows:
+two lines of text ("Creative • Singleplayer", then "In the Overworld"; a
+server adds how many players it lists, a LAN world how many of the 8 are in),
+the dimension's picture beside the logo with the version as its tooltip, a
+clock counting from the moment the world was entered (the session, in the
+menus), and a button to the download page. It never shows a world's name or a
+server's address. Settings has the switch
 (**Discord Rich Presence**, on by default; `discordPresence` in
 `horizon-extras.txt`), and `HORIZON_NO_DISCORD=1` turns it off for one run.
 
@@ -261,8 +264,22 @@ only talk to a fake Discord: `lab.game_env` sets `HORIZON_NO_DISCORD=1`, and
 `tools/discord_presence_e2e.py` points games at a fake server with
 `HORIZON_DISCORD_IPC_DIR` (title, world, Nether and quit on both single-player
 paths; a LAN host and guest; the switch; a Discord started after the game).
-`DISCORD_APP_ID` is Discord's "Horizon" application, whose `horizon` image is
-the large one; there are no game-mode images yet.
+`DISCORD_APP_ID` is Discord's "Volt+" application; its Rich Presence assets are
+`volt` (the large logo) and `overworld`, `nether`, `end` (the small dimension
+pictures), uploaded under those names in the developer portal.
+
+On a phone there is no Discord IPC socket, but the Discord Android app does
+publish presence for other apps through a bound service
+(`com.discord.socialsdk.rpc.IDiscordRpcService`, the transport its own Social
+SDK uses). The Android build binds it instead of opening a socket:
+`crates/horizon-client/src/android/discord.rs` hands the same card to
+`dev.horizon.android.DiscordPresence` (three AIDL files under
+`packaging/android/aidl`), which connects with the application id and posts
+Discord's RPC frames on the main looper, so the game never waits for a Discord
+that is slow, missing or updating. The phone's card is the Social SDK's richer
+shape: it names the app ("Playing Volt+"), links both text lines and the logo
+to the download page, and takes the logo as a plain address, so a card is
+detailed without any asset upload.
 
 ### Play on another of your machines
 

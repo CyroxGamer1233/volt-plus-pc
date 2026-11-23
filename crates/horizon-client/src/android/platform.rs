@@ -198,6 +198,34 @@ fn vibrate_gamepad(pulse: horizon_client::gamepad::Pulse, amplitude: i32) -> boo
     .unwrap_or(false)
 }
 
+/// Looks an app class up through the activity's class loader.
+///
+/// `FindClass` on a thread that merely attached to the VM resolves names with the boot class
+/// loader, which cannot see the app's own classes, so every call made that way throws. Going
+/// through the activity's loader works from any thread.
+pub(crate) fn app_class<'a>(
+    env: &mut JNIEnv<'a>,
+    activity: &JObject<'_>,
+    name: &str,
+) -> jni::errors::Result<jni::objects::JClass<'a>> {
+    let wanted = JObject::from(env.new_string(name)?);
+    let loader = env
+        .call_method(activity, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])?
+        .l()?;
+    let class = env
+        .call_method(
+            &loader,
+            "loadClass",
+            "(Ljava/lang/String;)Ljava/lang/Class;",
+            &[JValue::Object(&wanted)],
+        )?
+        .l()?;
+    if class.is_null() {
+        return Err(jni::errors::Error::NullPtr("app class"));
+    }
+    Ok(jni::objects::JClass::from(class))
+}
+
 pub(crate) fn with_context<R>(
     f: impl FnOnce(&mut JNIEnv<'_>, &JObject<'_>) -> jni::errors::Result<R>,
 ) -> Option<R> {

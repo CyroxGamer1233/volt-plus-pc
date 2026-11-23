@@ -4840,23 +4840,22 @@ impl Launcher {
             }
             SettingsCategory::Launcher => {
                 let c = &self.catalog.config;
-                let count = 12;
+                let count = 10;
                 let extra_ime = if ime_top_dp.is_some() { 180.0 } else { 0.0 };
                 let max_scroll =
                     (count as f32 * step_y + extra_ime - (list_bottom - list_top)).max(0.0);
                 if self.catalog.editing == Some("server")
                     && let Some(ime_y) = ime_top_dp
                 {
-                    let server_y = list_top + 10.0 * step_y - self.catalog.scroll;
+                    let server_y = list_top + 8.0 * step_y - self.catalog.scroll;
                     if server_y + card_h > ime_y - 12.0 {
-                        self.catalog.scroll = (list_top + 10.0 * step_y + card_h - (ime_y - 16.0))
+                        self.catalog.scroll = (list_top + 8.0 * step_y + card_h - (ime_y - 16.0))
                             .clamp(0.0, max_scroll);
                     }
                 }
                 self.catalog.scroll = self.catalog.scroll.clamp(0.0, max_scroll);
                 self.list_view = Some([list_top, list_bottom, max_scroll]);
 
-                let theme_str = format!("{} ›", c.theme.preset.label());
                 let ui_scale_str = format!("{} v", c.ui_scale_label());
                 let profile_str = format!("Profile {} v", c.profile + 1);
                 let input_str = format!("{} v", c.input_host.label());
@@ -4877,21 +4876,7 @@ impl Launcher {
                 };
                 let game_anim_off = c.disable_game_animations || touch_cfg.disable_game_animations;
 
-                let rows: [(&str, &str, SettingControl<'_>); 12] = [
-                    (
-                        "APPEARANCE, DPI SCALING & MOTION",
-                        "Material 3 Expressive theme studio, adaptive phone DPI scaling & animation toggles",
-                        SettingControl::SectionHeader(c.theme.preset.label(), Icon::Settings),
-                    ),
-                    (
-                        "Theme",
-                        "Preset themes, custom solid/accent colors, multi-stop gradients & light/dark mode",
-                        SettingControl::Button(
-                            &theme_str,
-                            Action::SettingsCat(SettingsCategory::Theme),
-                            true,
-                        ),
-                    ),
+                let rows: [(&str, &str, SettingControl<'_>); 10] = [
                     (
                         "Launcher UI scale (Phone DPI)",
                         "Adapts launcher cards, text and buttons to your screen DPI",

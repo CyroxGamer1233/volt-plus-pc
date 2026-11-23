@@ -51,8 +51,10 @@ android {
             signingConfig hasReleaseKey ? signingConfigs.releaseKey : signingConfigs.development
         }
     }
+    buildFeatures { aidl true }
     sourceSets.main {
         java.srcDirs = ['java']
+        aidl.srcDirs = ['aidl']
         manifest.srcFile 'AndroidManifest.xml'
         jniLibs.srcDirs = ['../../.local/android/gradle-jni']
         assets.srcDirs = ['../../.local/android/gradle-assets', 'media']

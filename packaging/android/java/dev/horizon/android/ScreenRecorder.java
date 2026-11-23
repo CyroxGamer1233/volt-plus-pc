@@ -14,8 +14,11 @@ public final class ScreenRecorder {
     /** The request code of the microphone permission prompt. */
     public static final int REQUEST_MIC = 4211;
 
-    /** Where a finished recording lands (under Movies, so any gallery app sees it). */
-    static final String FOLDER = "Movies/VoltPlus";
+    /**
+     * Where a finished recording lands: a {@code Recordings} folder at the top of shared storage,
+     * so the player finds it in Files without hunting through Movies.
+     */
+    static final String FOLDER = "Recordings";
 
     static volatile String state = "idle";
     static volatile String message = "";
@@ -95,6 +98,47 @@ public final class ScreenRecorder {
                 + device;
     }
 
+    /** Whether any recording is running: the display's, or the game's own frames. */
+    static boolean busy() {
+        return RecorderService.busy() || EngineRecorder.active();
+    }
+
+    /**
+     * Records the game's own frames at {@code w x h}, {@code f} frames a second: no display
+     * capture, no consent prompt, and the touch controls stay on screen without appearing in
+     * the video (the renderer copies each frame into the encoder's surface before the HUD).
+     * Answers {@code recording;WxH} with the size the device accepted.
+     */
+    public static synchronized String startEngine(
+            android.app.Activity activity, int w, int h, int f) {
+        if (activity == null) {
+            return "error;no window to record";
+        }
+        if (busy()) {
+            return "recording;already recording";
+        }
+        uri = "";
+        bytes = 0L;
+        startedAt = System.currentTimeMillis();
+        message = "";
+        String answer = EngineRecorder.start(activity.getApplicationContext(), w, h, f);
+        if (answer.startsWith("recording;")) {
+            state = "recording";
+        } else if (answer.startsWith("error;")) {
+            state = "error";
+            message = answer.substring("error;".length());
+        } else if (answer.startsWith("unsupported;")) {
+            state = "unsupported";
+            message = answer.substring("unsupported;".length());
+        }
+        return answer;
+    }
+
+    /** The encoder's own surface, while the game's frames are being recorded. */
+    public static synchronized android.view.Surface engineSurface() {
+        return EngineRecorder.surface();
+    }
+
     /**
      * Asks for screen capture at {@code w x h}, {@code f} frames a second. The size is a request:
      * {@link RecorderService} fits it to the display and the device's encoder. Returns a
@@ -105,7 +149,7 @@ public final class ScreenRecorder {
         if (activity == null) {
             return "error;no window to record";
         }
-        if (RecorderService.busy()) {
+        if (busy()) {
             return "recording;already recording";
         }
         if ("asking".equals(state)) {
@@ -209,9 +253,13 @@ public final class ScreenRecorder {
 
     /** Ends the current recording; the service finalises the file first. */
     public static synchronized String stop() {
-        if (!RecorderService.busy()) {
+        if (!busy()) {
             state = "idle";
             return "idle;nothing is recording";
+        }
+        if (EngineRecorder.active()) {
+            state = "stopping";
+            return EngineRecorder.stop();
         }
         state = "stopping";
         RecorderService.stopNow("saved");
@@ -240,8 +288,8 @@ public final class ScreenRecorder {
 
     /**
      * One recording per line, {@code name\tbytes\taddedMillis\turi}. On Android 10 and newer the
-     * list is MediaStore's {@code Movies/VoltPlus}; before that it is the app's own Movies folder
-     * (where playing back needs Android 10).
+     * list is MediaStore's {@code Recordings} folder (plus the older {@code Movies/VoltPlus});
+     * before that it is the folder the service writes to, where playing back needs Android 10.
      */
     public static String recordings(android.content.Context context) {
         StringBuilder out = new StringBuilder();
@@ -259,8 +307,13 @@ public final class ScreenRecorder {
                 android.provider.MediaStore.Video.Media.DATE_ADDED,
             };
             String where =
-                    android.provider.MediaStore.Video.Media.RELATIVE_PATH + " LIKE ?";
-            String[] args = {"Movies/VoltPlus%"};
+                    android.provider.MediaStore.Video.Media.RELATIVE_PATH
+                            + " LIKE ? OR "
+                            + android.provider.MediaStore.Video.Media.RELATIVE_PATH
+                            + " LIKE ?";
+            // Everything the recorder wrote, including recordings from before the folder
+            // moved out of Movies.
+            String[] args = {FOLDER + "%", "Movies/VoltPlus%"};
             android.database.Cursor cursor = null;
             try {
                 cursor =

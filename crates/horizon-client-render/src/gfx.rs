@@ -247,6 +247,8 @@ mod pack_weather;
 mod page_runs;
 pub mod panorama;
 mod readback;
+#[cfg(target_os = "android")]
+mod record_target;
 mod resident;
 mod stars;
 mod sunrise_fan;
@@ -896,6 +898,19 @@ pub struct Renderer {
     frame_scale: Option<frame_scale::FrameScale>,
     #[cfg(target_os = "android")]
     opaque_output: Option<opaque_output::OpaqueOutput>,
+    /// The recorder's own swapchain, while a raw recording runs: frames are copied into it
+    /// before the HUD, so the video has the game without the controls (`record_target`).
+    #[cfg(target_os = "android")]
+    record: Option<record_target::RecordTarget>,
+    /// A surface the recorder just handed over, set up on the next frame.
+    #[cfg(target_os = "android")]
+    record_pending: Option<(wgpu::Surface<'static>, [u32; 2])>,
+    /// Which capture the game asked for; the caller polls it to know when to reattach.
+    #[cfg(target_os = "android")]
+    record_serial: u64,
+    /// The pointer the attached capture was made from, for the caller's bookkeeping.
+    #[cfg(target_os = "android")]
+    record_window: usize,
     #[cfg(target_os = "android")]
     startup: Option<crate::android_runtime::graphics_startup::Startup>,
     /// HDR output (Horizon setting): `Some` while the swapchain is HDR.
@@ -3886,6 +3901,14 @@ impl Renderer {
             #[cfg(target_os = "android")]
             opaque_output: None,
             #[cfg(target_os = "android")]
+            record: None,
+            #[cfg(target_os = "android")]
+            record_pending: None,
+            #[cfg(target_os = "android")]
+            record_serial: 0,
+            #[cfg(target_os = "android")]
+            record_window: 0,
+            #[cfg(target_os = "android")]
             startup,
             hdr: None,
             emission_stats,
@@ -4083,6 +4106,39 @@ impl Renderer {
         self.surface = Some(surface);
         self.suspended = false;
         Ok(())
+    }
+
+    /// The instance the renderer's surfaces are made in, for callers that create one of
+    /// their own (the recorder's encoder surface).
+    #[cfg(target_os = "android")]
+    pub fn instance(&self) -> &wgpu::Instance {
+        &self.instance
+    }
+    /// Points the renderer at the recorder's own swapchain, or clears it. Every frame is
+    /// then copied there *before* the HUD is drawn, so a raw recording's video has the game
+    /// without the controls (the screen keeps them).
+    #[cfg(target_os = "android")]
+    pub fn set_record_surface(
+        &mut self,
+        surface: Option<wgpu::Surface<'static>>,
+        size: [u32; 2],
+        serial: u64,
+        window: usize,
+    ) {
+        self.record = None;
+        self.record_pending = surface.map(|surface| (surface, size));
+        self.record_serial = serial;
+        self.record_window = window;
+    }
+    /// The capture the renderer holds: `0` when it records nothing.
+    #[cfg(target_os = "android")]
+    pub fn record_serial(&self) -> u64 {
+        self.record_serial
+    }
+    /// The pointer the attached capture was made from (`ANativeWindow`).
+    #[cfg(target_os = "android")]
+    pub fn record_window(&self) -> usize {
+        self.record_window
     }
     /// Update the loading/title screen's HUD atlas, glint and panorama textures
     /// in place without tearing down the live swapchain surface or recompiling
@@ -5970,6 +6026,16 @@ impl Renderer {
         }
         if self.suspended {
             return Ok(false);
+        }
+        #[cfg(target_os = "android")]
+        if let Some((surface, size)) = self.record_pending.take() {
+            // A codec surface that cannot be configured stops the capture, not the game.
+            self.record =
+                record_target::RecordTarget::new(&self.adapter, &self.device, surface, size);
+            if self.record.is_none() {
+                self.record_serial = 0;
+                self.record_window = 0;
+            }
         }
         #[cfg(target_os = "android")]
         {
@@ -8761,6 +8827,20 @@ impl Renderer {
             let first = debug_depth + debug_top;
             pass.draw(0..4, first..first + crosshair);
         }
+        // The recorder's frame: the game as it is now, before any of the HUD.
+        #[cfg(target_os = "android")]
+        let record_frame = if surface_frame.is_some() && self.screenshot.is_none() {
+            let device = &self.device;
+            let size = [self.config.width, self.config.height];
+            match self.record.as_mut() {
+                Some(record) => record.present(device, &mut encoder, &view_target, size),
+                None => None,
+            }
+        } else {
+            None
+        };
+        #[cfg(not(target_os = "android"))]
+        let record_frame: Option<wgpu::SurfaceTexture> = None;
         let blur_at = menu_blur.map_or(0, |_| frame.hud.blur_at);
         self.hud.draw_range(
             &mut encoder,
@@ -8926,6 +9006,11 @@ impl Renderer {
             #[cfg(target_os = "android")]
             self.in_flight.push_back(submission);
             self.queue.present(surface_frame);
+            // The recorder's frame goes to MediaCodec once the work is queued.
+            #[cfg(target_os = "android")]
+            if let Some(record) = record_frame {
+                self.queue.present(record);
+            }
             if self.hdr.is_some()
                 && let Some(marker) = self.hdr_marker.take()
             {

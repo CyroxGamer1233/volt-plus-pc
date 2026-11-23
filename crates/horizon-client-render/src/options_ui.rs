@@ -1824,6 +1824,95 @@ impl Default for OptionsUi {
         }
     }
 }
+/// Volt Plus: the options screens wear the control hub's glass instead of vanilla's stone.
+///
+/// Vanilla still draws the widget underneath (so the screen reader records the same
+/// labels, sliders and rows as before); this plate is drawn over it, which is why it is
+/// nearly opaque: nothing of the stone sprite comes through, and the whole screen reads as
+/// one piece with the overlay. Only this module calls these.
+const GLASS_PLATE: u32 = 0xF217_1419;
+const GLASS_PLATE_HOVER: u32 = 0xFA26_2050;
+const GLASS_PLATE_OFF: u32 = 0xF212_1016;
+const GLASS_EDGE: u32 = 0x33FF_FFFF;
+const GLASS_EDGE_HOVER: u32 = 0xFFA9_8BFF;
+const GLASS_ACCENT: u32 = 0xFF7C_5CFF;
+const GLASS_TEXT: u32 = 0xFFF4_F2F8;
+const GLASS_MUTED: u32 = 0xFFA6_A3B4;
+
+fn glass_plate(
+    batch: &mut HudBatch,
+    atlas: &HudAtlas,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    active: bool,
+    hover: bool,
+) {
+    let fill = if !active {
+        GLASS_PLATE_OFF
+    } else if hover {
+        GLASS_PLATE_HOVER
+    } else {
+        GLASS_PLATE
+    };
+    let edge = if active && hover {
+        GLASS_EDGE_HOVER
+    } else {
+        GLASS_EDGE
+    };
+    batch.fill(atlas, x, y, w, h, fill);
+    batch.fill(atlas, x, y, w, 1.0, edge);
+    batch.fill(atlas, x, y + h - 1.0, w, 1.0, edge);
+    batch.fill(atlas, x, y, 1.0, h, edge);
+    batch.fill(atlas, x + w - 1.0, y, 1.0, h, edge);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn glass_button(
+    batch: &mut HudBatch,
+    atlas: &HudAtlas,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    label: &Text,
+    active: bool,
+    hover: bool,
+) {
+    glass_plate(batch, atlas, x, y, w, h, active, hover);
+    let color = if active { GLASS_TEXT } else { GLASS_MUTED };
+    ui::centered_text(batch, atlas, label, x + 2.0, y + 6.0, w - 4.0, color);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn glass_slider(
+    batch: &mut HudBatch,
+    atlas: &HudAtlas,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    label: &Text,
+    value: f32,
+    hover: bool,
+    active: bool,
+) {
+    glass_plate(batch, atlas, x, y, w, h, active, hover);
+    let track_w = (w - 8.0).max(4.0);
+    let track_y = y + h - 6.0;
+    let t = value.clamp(0.0, 1.0);
+    batch.fill(atlas, x + 4.0, track_y, track_w, 2.0, 0x33FF_FFFF);
+    let filled = (t * track_w).floor();
+    if filled >= 1.0 {
+        batch.fill(atlas, x + 4.0, track_y, filled, 2.0, GLASS_ACCENT);
+    }
+    let knob_x = x + 4.0 + (t * track_w).floor();
+    batch.fill(atlas, knob_x - 1.0, track_y - 2.0, 4.0, 6.0, 0xFFFF_FFFF);
+    let color = if active { GLASS_TEXT } else { GLASS_MUTED };
+    ui::centered_text(batch, atlas, label, x + 2.0, y + 4.0, w - 4.0, color);
+}
+
 fn button(x: f32, y: f32, w: f32, label: Text, act: Act) -> Widget {
     Widget {
         x,
@@ -3869,7 +3958,10 @@ impl OptionsUi {
                             crate::hud::rgb(horizon_theme::warm::ON_ACCENT, 255),
                         );
                     } else {
+                        // Vanilla draws first for the narrator's record; the glass plate
+                        // is painted over it, so the stone never shows.
                         ui::button(batch, atlas, wd.x, wd.y, wd.w, wd.h, label, *active, hover);
+                        glass_button(batch, atlas, wd.x, wd.y, wd.w, wd.h, label, *active, hover);
                     }
                     crate::widgets::last_narratable(|n| {
                         narrate_widget(n, s, wd, hover, list_key, framebuffer);
@@ -3891,6 +3983,18 @@ impl OptionsUi {
                         self.can_change_value && is_focused,
                         true,
                         dragging,
+                    );
+                    glass_slider(
+                        batch,
+                        atlas,
+                        wd.x,
+                        wd.y,
+                        wd.w,
+                        wd.h,
+                        label,
+                        shown,
+                        hover || dragging,
+                        true,
                     );
                     crate::widgets::last_narratable(|n| {
                         narrate_widget(n, s, wd, hover, list_key, framebuffer);

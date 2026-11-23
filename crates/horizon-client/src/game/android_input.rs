@@ -699,7 +699,8 @@ impl Game<'_> {
         };
         let mut b = HudBatch::new([size.width, size.height]);
         let p = [t.location.x as f32 / b.scale, t.location.y as f32 / b.scale];
-        if !self.pad.touch_ui.owns_relative(t.id)
+        if (self.pad_in_menu() || horizon_client::recorder::hiding_controls())
+            && !self.pad.touch_ui.owns_relative(t.id)
             && !self.pad.touch_ui.owns_gesture(t.id)
             && let Some(menu_act) = self.pad.touch_ui.floating_menu_touch(
                 &mut b,
@@ -1043,7 +1044,9 @@ impl Game<'_> {
                     }
                 }
                 InGameMenuAction::ToggleRecorderOverlay => {
-                    horizon_client::recorder::update_settings(|s| s.hide_overlay = !s.hide_overlay);
+                    horizon_client::recorder::update_settings(|s| {
+                        s.record_controls = !s.record_controls
+                    });
                 }
                 InGameMenuAction::RecorderStart => crate::screen_record::start(),
                 InGameMenuAction::RecorderStop => crate::screen_record::stop(),

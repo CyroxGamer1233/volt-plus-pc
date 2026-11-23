@@ -1,5 +1,7 @@
-//! Discord Rich Presence: "Playing Horizon" on the player's Discord profile, with what they are
-//! doing (docs/native-client.md). A thread of its own talks to the Discord app on this computer
+//! Discord Rich Presence: "Playing Volt+" on the player's Discord profile, as detailed as the
+//! card allows — the game mode, singleplayer, a server or a LAN world, the dimension, how many
+//! players are in it, the time played, the logo with the version, and a button to the download
+//! page (docs/native-client.md). A thread of its own talks to the Discord app on this computer
 //! through its local IPC socket (Discord's RPC docs: `discord-ipc-N`, frames of opcode u32 LE +
 //! length u32 LE + JSON). The game only calls [`set`] each frame: a change wakes the thread,
 //! which connects when Discord runs, retries every 15 s when it doesn't, keeps under Discord's
@@ -16,12 +18,28 @@ use serde_json::{Value, json};
 
 use crate::command::args::GameMode;
 
-/// The "Horizon" application on Discord's developer portal (public: it names the game). Its
-/// Rich Presence assets: `horizon`, the logo.
-pub const DISCORD_APP_ID: &str = "1563857609738690560";
-/// Whether the application has the game-mode images (`survival`, `creative`, `adventure`,
-/// `spectator`) beside the logo; it doesn't yet.
-const MODE_IMAGES: bool = false;
+/// The "Volt+" application on Discord's developer portal (public: it names the game).
+pub const DISCORD_APP_ID: &str = "1574331637087469588";
+/// What the card calls the product.
+pub const PRODUCT: &str = "Volt+";
+/// The launcher's own version, the one Settings shows (mirrors `android_main`'s).
+#[cfg(target_os = "android")]
+const VERSION: &str = "1.0.1";
+#[cfg(not(target_os = "android"))]
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// Where the button on the card leads.
+const DOWNLOAD_URL: &str = "https://github.com/entitybrian69-bit/volt-plus";
+/// The logo the phone's card shows: a picture address Discord fetches itself, pinned to the
+/// commit that added it so it cannot change under the card.
+const LOGO_URL: &str = "https://raw.githubusercontent.com/entitybrian69-bit/volt-plus/ed65ec90fad334947e1dd12825e74569e7ed7749/packaging/android/res/drawable-nodpi/launcher_icon.png";
+/// The Rich Presence assets the card draws, by the names they must be uploaded under in the
+/// developer portal: the square logo, and one 512x512 picture a dimension.
+const LOGO_ASSET: &str = "volt";
+const DIMENSION_ASSETS: [(&str, &str); 3] = [
+    ("overworld", "overworld"),
+    ("nether", "nether"),
+    ("end", "end"),
+];
 /// Points the game at a test's fake Discord (a folder holding `discord-ipc-0`).
 const IPC_DIR_ENV: &str = "HORIZON_DISCORD_IPC_DIR";
 
@@ -49,8 +67,11 @@ pub enum Dimension {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Play {
     Singleplayer,
-    /// A server or someone else's LAN world. Its address and name are never shown.
-    Multiplayer,
+    /// A server or someone else's LAN world. Its address and name are never shown; `players`
+    /// is how many the server lists (0 while its player list has not arrived).
+    Multiplayer {
+        players: usize,
+    },
     /// This world is open to LAN or friends; `players` counts the host.
     Hosting {
         players: usize,
@@ -108,10 +129,46 @@ static SHARED: Mutex<Shared> = Mutex::new(Shared {
 });
 static STOPPED: Condvar = Condvar::new();
 static THREAD: OnceLock<Thread> = OnceLock::new();
+/// When this session started, so the card counts time played in the menus too.
+static SESSION: OnceLock<u64> = OnceLock::new();
+
+/// The platform's own transport, when it has one: the Android app publishes through Discord's
+/// bound service, since a phone has no desktop IPC socket to talk to.
+#[derive(Clone, Copy)]
+pub struct Sink {
+    pub publish: fn(&str),
+    pub clear: fn(),
+}
+static SINK: OnceLock<Sink> = OnceLock::new();
+
+/// Hands the card to the platform instead of the desktop's socket. Called once, by the Android
+/// app before [`start`]; the desktop never installs one.
+pub fn use_platform(sink: Sink) {
+    if SINK.set(sink).is_err() {
+        return;
+    }
+    // Nothing has been published yet, so the first status the game reports must reach the
+    // platform even when it is the one a fresh session starts in.
+    lock().wanted = Wanted {
+        status: Status::Off,
+        since: None,
+    };
+}
+
+/// Whether cards go through the platform's transport.
+pub fn on_platform() -> bool {
+    SINK.get().is_some()
+}
 
 /// Starts the presence thread, once: when the game starts, never for a dedicated server.
 /// `automated` runs (offscreen, benchmarks) only talk to a test's fake Discord.
 pub fn start(enabled: bool, automated: bool) {
+    let _ = SESSION.set(unix_now());
+    // A phone has no Discord IPC socket: its cards go through the platform's sink, so the
+    // thread below would only retry a socket that never exists.
+    if cfg!(target_os = "android") {
+        return;
+    }
     let fake_discord = std::env::var_os(IPC_DIR_ENV).is_some();
     if THREAD.get().is_some()
         || std::env::var_os("HORIZON_NO_DISCORD").is_some_and(|v| v != "0")
@@ -129,12 +186,28 @@ pub fn start(enabled: bool, automated: bool) {
         Ok(handle) => {
             let _ = THREAD.set(handle.thread().clone());
         }
-        Err(e) => log::warn!("Horizon: no Discord presence: {e}"),
+        Err(e) => log::warn!("Volt+: no Discord presence: {e}"),
     }
 }
 
-/// What the player does now; only a change wakes the thread. Free without [`start`].
+/// What the player does now; only a change is published. Free without [`start`] or a sink.
 pub fn set(status: Status) {
+    if let Some(sink) = SINK.get() {
+        // The platform publishes a whole card per change; the desktop thread wakes instead.
+        let wanted = {
+            let mut shared = lock();
+            if !shared.wanted.update(status, unix_now()) {
+                return;
+            }
+            shared.wanted
+        };
+        let session = SESSION.get().copied().unwrap_or(0);
+        match platform_activity(wanted.status, wanted.since, session) {
+            Some(card) => (sink.publish)(&card.to_string()),
+            None => (sink.clear)(),
+        }
+        return;
+    }
     let Some(thread) = THREAD.get() else {
         return;
     };
@@ -145,6 +218,10 @@ pub fn set(status: Status) {
 
 /// On quit: clears the activity, waiting at most a moment for Discord.
 pub fn stop() {
+    if let Some(sink) = SINK.get() {
+        (sink.clear)();
+        return;
+    }
     let Some(thread) = THREAD.get() else {
         return;
     };
@@ -213,10 +290,14 @@ fn run() {
         }
         limit.record(now);
         let c = client.as_mut().expect("connected");
-        match c.set_activity(activity(wanted.status, wanted.since)) {
+        match c.set_activity(activity(
+            wanted.status,
+            wanted.since,
+            SESSION.get().copied().unwrap_or(0),
+        )) {
             Ok(()) => sent = Some((wanted, now)),
             Err(e) => {
-                log::info!("Horizon: Discord presence disconnected ({e})");
+                log::info!("Volt+: Discord presence disconnected ({e})");
                 client = None;
                 sent = None;
             }
@@ -224,55 +305,155 @@ fn run() {
     }
 }
 
-/// The activity Discord shows for `status`; `None` clears it.
-fn activity(status: Status, since: Option<u64>) -> Option<Value> {
-    let mut assets = json!({"large_image": "horizon", "large_text": "Horizon"});
-    let (details, state, party) = match status {
-        Status::Off => return None,
-        Status::Menus => ("In the menus", None, None),
+/// The card Discord shows for `status`; `None` clears it. Discord gives a card two lines of
+/// text, two pictures with their own tooltip, a start time (so it counts up), a party size and
+/// two buttons: all of them are used, and every line stays under Discord's 128 characters.
+fn activity(status: Status, since: Option<u64>, session: u64) -> Option<Value> {
+    let (details, state, place, start, party) = card_lines(status, since, session)?;
+    let mut assets = json!({
+        "large_image": LOGO_ASSET,
+        "large_text": format!("{PRODUCT} {VERSION}"),
+    });
+    if let Some(dimension) = place {
+        let key = asset_for(dimension);
+        assets["small_image"] = key.into();
+        assets["small_text"] = place_name(dimension).into();
+    }
+    let mut a = json!({
+        "details": short(&details),
+        "state": short(&state),
+        "assets": assets,
+        "buttons": [{"label": format!("Get {PRODUCT}"), "url": DOWNLOAD_URL}],
+    });
+    if start > 0 {
+        a["timestamps"] = json!({"start": start});
+    }
+    if let Some(players) = party {
+        a["party"] = json!({
+            "id": format!("volt-{}", std::process::id()),
+            "size": [players, crate::lan::MAX_PLAYERS],
+        });
+    }
+    Some(a)
+}
+
+/// The card the phone's Discord app shows: the Social SDK's own shape, whose pictures and
+/// clickable lines take plain addresses, so a card is detailed without uploading any asset.
+fn platform_activity(status: Status, since: Option<u64>, session: u64) -> Option<Value> {
+    let (details, state, _place, start, party) = card_lines(status, since, session)?;
+    let mut a = json!({
+        // "Playing Volt+": the card is the app's, so its name is the product's.
+        "name": PRODUCT,
+        "type": 0,
+        "status_display_type": 0,
+        "details": short(&details),
+        "state": short(&state),
+        "details_url": DOWNLOAD_URL,
+        "state_url": DOWNLOAD_URL,
+        "assets": {
+            "large_image": LOGO_URL,
+            "large_text": format!("{PRODUCT} {VERSION}"),
+            "large_url": DOWNLOAD_URL,
+        },
+        "buttons": [{"label": format!("Get {PRODUCT}"), "url": DOWNLOAD_URL}],
+    });
+    if start > 0 {
+        a["timestamps"] = json!({"start": start});
+    }
+    if let Some(players) = party {
+        a["party"] = json!({
+            "id": format!("volt-{}", std::process::id()),
+            "size": [players, crate::lan::MAX_PLAYERS],
+        });
+    }
+    Some(a)
+}
+
+/// The two lines, the dimension, the clock and the party a card is made of; `None` when the
+/// card must be cleared. Both transports share it, so they can never say different things.
+fn card_lines(
+    status: Status,
+    since: Option<u64>,
+    session: u64,
+) -> Option<(String, String, Option<Dimension>, u64, Option<usize>)> {
+    match status {
+        Status::Off => None,
+        Status::Menus => Some((
+            format!("In the {PRODUCT} launcher"),
+            format!("{PRODUCT} {VERSION} • {}", platform()),
+            None,
+            session,
+            None,
+        )),
         Status::World {
             play,
             dimension,
             mode,
         } => {
-            if MODE_IMAGES {
-                let (key, text) = match mode {
-                    GameMode::Survival => ("survival", "Survival"),
-                    GameMode::Creative => ("creative", "Creative"),
-                    GameMode::Adventure => ("adventure", "Adventure"),
-                    GameMode::Spectator => ("spectator", "Spectator"),
-                };
-                assets["small_image"] = key.into();
-                assets["small_text"] = text.into();
-            }
-            let place = match dimension {
-                Dimension::Overworld => "In the Overworld",
-                Dimension::Nether => "In the Nether",
-                Dimension::End => "In the End",
+            let place = place_name(dimension);
+            let mode = mode_name(mode);
+            let details = match play {
+                Play::Singleplayer => format!("{mode} • Singleplayer"),
+                Play::Multiplayer { players: 0 } => format!("{mode} • Multiplayer"),
+                Play::Multiplayer { players } => format!("{mode} • Multiplayer, {players} online"),
+                Play::Hosting { .. } => format!("{mode} • LAN world"),
             };
-            let (details, party) = match play {
-                Play::Singleplayer => ("Singleplayer", None),
-                Play::Multiplayer => ("Multiplayer", None),
-                Play::Hosting { players } => ("Hosting a world", Some(players)),
+            let max = crate::lan::MAX_PLAYERS;
+            let state = match play {
+                Play::Hosting { players } => format!("{place} • {players} of {max} players"),
+                _ => place.to_owned(),
             };
-            (details, Some(place), party)
+            let party = match play {
+                Play::Hosting { players } => Some(players.clamp(1, max)),
+                _ => None,
+            };
+            Some((details, state, Some(dimension), since.unwrap_or(session), party))
         }
+    }
+}
+
+/// Discord drops anything past 128 characters, and a cut line looks like a bug.
+fn short(text: &str) -> String {
+    const LIMIT: usize = 128;
+    if text.chars().count() <= LIMIT {
+        return text.to_owned();
+    }
+    text.chars().take(LIMIT - 1).chain(['\u{2026}']).collect()
+}
+
+fn mode_name(mode: GameMode) -> &'static str {
+    match mode {
+        GameMode::Survival => "Survival",
+        GameMode::Creative => "Creative",
+        GameMode::Adventure => "Adventure",
+        GameMode::Spectator => "Spectator",
+    }
+}
+
+fn place_name(dimension: Dimension) -> &'static str {
+    match dimension {
+        Dimension::Overworld => "In the Overworld",
+        Dimension::Nether => "In the Nether",
+        Dimension::End => "In the End",
+    }
+}
+
+/// The picture uploaded for a dimension, by the name the portal has it under.
+fn asset_for(dimension: Dimension) -> &'static str {
+    let wanted = match dimension {
+        Dimension::Overworld => "overworld",
+        Dimension::Nether => "nether",
+        Dimension::End => "end",
     };
-    let mut a = json!({"details": details, "assets": assets});
-    if let Some(state) = state {
-        a["state"] = state.into();
-    }
-    if let Some(start) = since {
-        a["timestamps"] = json!({"start": start});
-    }
-    if let Some(players) = party {
-        let max = crate::lan::MAX_PLAYERS;
-        a["party"] = json!({
-            "id": format!("horizon-{}", std::process::id()),
-            "size": [players.clamp(1, max), max],
-        });
-    }
-    Some(a)
+    DIMENSION_ASSETS
+        .iter()
+        .find(|(key, _)| *key == wanted)
+        .map_or(wanted, |(_, asset)| *asset)
+}
+
+/// The system the game runs on, as the card's second line says it.
+fn platform() -> &'static str {
+    std::env::consts::OS
 }
 
 /// At most [`BURST`] updates in any [`WINDOW`].
@@ -338,11 +519,11 @@ impl Client {
             };
             match client.handshake() {
                 Ok(()) => {
-                    log::info!("Horizon: connected to Discord for Rich Presence");
+                    log::info!("Volt+: connected to Discord for Rich Presence");
                     Some(client)
                 }
                 Err(e) => {
-                    log::debug!("Horizon: Discord at {} refused: {e}", path.display());
+                    log::debug!("Volt+: Discord at {} refused: {e}", path.display());
                     None
                 }
             }
@@ -370,7 +551,7 @@ impl Client {
             match read_frame(&mut self.pipe)? {
                 (FRAME, frame) if ours(&frame) => {
                     if frame["evt"] == "ERROR" {
-                        log::info!("Horizon: Discord presence: {}", frame["data"]["message"]);
+                        log::info!("Volt+: Discord presence: {}", frame["data"]["message"]);
                     }
                     return Ok(());
                 }
@@ -514,28 +695,88 @@ mod tests {
 
     #[test]
     fn activities_say_what_the_player_does_and_nothing_private() {
-        assert_eq!(activity(Status::Off, None), None);
-        let menus = activity(Status::Menus, None).unwrap();
-        assert_eq!(menus["details"], "In the menus");
-        assert!(menus.get("state").is_none() && menus.get("timestamps").is_none());
-        assert_eq!(menus["assets"]["large_image"], "horizon");
+        assert_eq!(activity(Status::Off, None, 900), None);
 
-        let single = activity(world(Play::Singleplayer, Dimension::Nether), Some(1000)).unwrap();
-        assert_eq!(single["details"], "Singleplayer");
+        // The menus card: the launcher, its version, the system, and the download button.
+        let menus = activity(Status::Menus, None, 900).unwrap();
+        assert_eq!(menus["details"], "In the Volt+ launcher");
+        let state = menus["state"].as_str().unwrap();
+        assert!(state.starts_with("Volt+ "), "{state}");
+        assert!(state.ends_with(std::env::consts::OS), "{state}");
+        assert_eq!(menus["timestamps"]["start"], 900, "time played counts in menus");
+        assert_eq!(menus["assets"]["large_image"], "volt");
+        assert_eq!(menus["assets"]["large_text"], format!("Volt+ {VERSION}"));
+        assert_eq!(menus["buttons"][0]["url"], DOWNLOAD_URL);
+        assert!(menus.get("party").is_none());
+
+        // A world: the mode and who with, then where, then the dimension's own picture.
+        let single = activity(world(Play::Singleplayer, Dimension::Nether), Some(1000), 900).unwrap();
+        assert_eq!(single["details"], "Survival • Singleplayer");
         assert_eq!(single["state"], "In the Nether");
         assert_eq!(single["timestamps"]["start"], 1000);
+        assert_eq!(single["assets"]["small_image"], "nether");
+        assert_eq!(single["assets"]["small_text"], "In the Nether");
         assert!(single.get("party").is_none());
-        assert!(single["assets"].get("small_image").is_none());
 
-        let multi = activity(world(Play::Multiplayer, Dimension::End), Some(5)).unwrap();
-        assert_eq!(multi["details"], "Multiplayer");
+        let multi = world(Play::Multiplayer { players: 12 }, Dimension::End);
+        let multi = activity(multi, Some(5), 900).unwrap();
+        assert_eq!(multi["details"], "Survival • Multiplayer, 12 online");
         assert_eq!(multi["state"], "In the End");
+        assert_eq!(multi["assets"]["small_image"], "end");
+        assert!(multi.get("party").is_none());
+        // A server whose player list has not arrived yet still reads as multiplayer.
+        let silent = world(Play::Multiplayer { players: 0 }, Dimension::Overworld);
+        assert_eq!(activity(silent, Some(5), 900).unwrap()["details"], "Survival • Multiplayer");
 
         let host = world(Play::Hosting { players: 3 }, Dimension::Overworld);
-        let host = activity(host, Some(5)).unwrap();
-        assert_eq!(host["details"], "Hosting a world");
-        assert_eq!(host["state"], "In the Overworld");
+        let host = activity(host, Some(5), 900).unwrap();
+        assert_eq!(host["details"], "Survival • LAN world");
+        assert_eq!(host["state"], "In the Overworld • 3 of 8 players");
         assert_eq!(host["party"]["size"], json!([3, 8]));
+        assert_eq!(host["party"]["id"], format!("volt-{}", std::process::id()));
+    }
+
+    /// The phone's card is the Social SDK's: it names the app, links its lines and takes a
+    /// plain address for the picture, so nothing has to be uploaded to the portal.
+    #[test]
+    fn the_phones_card_links_everything_and_says_the_same_thing() {
+        let card = platform_activity(
+            world(Play::Hosting { players: 2 }, Dimension::Nether),
+            Some(40),
+            900,
+        )
+        .unwrap();
+        assert_eq!(card["name"], "Volt+");
+        assert_eq!(card["details"], "Survival • LAN world");
+        assert_eq!(card["state"], "In the Nether • 2 of 8 players");
+        assert_eq!(card["timestamps"]["start"], 40);
+        assert_eq!(card["party"]["size"], json!([2, 8]));
+        let logo = card["assets"]["large_image"].as_str().unwrap();
+        assert!(logo.starts_with("https://"), "{logo}");
+        assert_eq!(card["assets"]["large_text"], format!("Volt+ {VERSION}"));
+        assert_eq!(card["assets"]["large_url"], DOWNLOAD_URL);
+        assert_eq!(card["details_url"], DOWNLOAD_URL);
+        assert_eq!(card["state_url"], DOWNLOAD_URL);
+        assert_eq!(card["buttons"][0]["url"], DOWNLOAD_URL);
+        assert_eq!(platform_activity(Status::Off, None, 900), None);
+        // Both transports agree on the words.
+        let desktop = activity(
+            world(Play::Hosting { players: 2 }, Dimension::Nether),
+            Some(40),
+            900,
+        )
+        .unwrap();
+        assert_eq!(desktop["details"], card["details"]);
+        assert_eq!(desktop["state"], card["state"]);
+    }
+
+    #[test]
+    fn every_line_fits_what_discord_shows() {
+        assert_eq!(short("Survival • Singleplayer"), "Survival • Singleplayer");
+        let long = "a".repeat(200);
+        let cut = short(&long);
+        assert_eq!(cut.chars().count(), 128);
+        assert!(cut.ends_with('…'));
     }
 
     #[test]
@@ -553,7 +794,10 @@ mod tests {
         assert_eq!(w.since, Some(20));
         assert!(w.update(Status::Menus, 50));
         assert_eq!(w.since, None);
-        assert!(w.update(world(Play::Multiplayer, Dimension::Overworld), 60));
+        assert!(w.update(
+            world(Play::Multiplayer { players: 4 }, Dimension::Overworld),
+            60
+        ));
         assert_eq!(w.since, Some(60));
         assert!(w.update(Status::Off, 70));
         assert_eq!(w.since, None);
@@ -609,7 +853,7 @@ mod tests {
             nonce: 0,
         };
         client.handshake().unwrap();
-        let shown = activity(world(Play::Singleplayer, Dimension::End), Some(7));
+        let shown = activity(world(Play::Singleplayer, Dimension::End), Some(7), 1);
         client.set_activity(shown.clone()).unwrap();
         client.set_activity(None).unwrap();
         let got = server.join().unwrap();

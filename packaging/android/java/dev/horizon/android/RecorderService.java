@@ -49,13 +49,21 @@ import java.nio.ByteBuffer;
  * a recording that fails half way is deleted rather than left as a broken file.
  */
 public final class RecorderService extends Service {
-    /** The app's own record folder before Android 10, where MediaStore cannot help. */
+    /**
+     * Where a recording goes before Android 10, when MediaStore cannot help: the shared
+     * {@code Recordings} folder if the permission allows writing there, otherwise the app's own
+     * Movies folder, which nothing else can read.
+     */
     static File legacyFolder(android.content.Context context) {
+        File shared = new File(Environment.getExternalStorageDirectory(), "Recordings");
+        if (shared.exists() ? shared.canWrite() : shared.mkdirs()) {
+            return shared;
+        }
         File movies = context.getExternalFilesDir(Environment.DIRECTORY_MOVIES);
         if (movies == null) {
             movies = context.getFilesDir();
         }
-        File folder = new File(movies, "VoltPlus");
+        File folder = new File(movies, "Recordings");
         if (!folder.exists()) {
             folder.mkdirs();
         }

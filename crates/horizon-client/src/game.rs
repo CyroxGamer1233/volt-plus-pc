@@ -15106,6 +15106,11 @@ impl Game<'_> {
             if let Some(hidden) = horizon_client::recorder::sync_controls(self.ui.hide_gui) {
                 self.ui.hide_gui = hidden;
             }
+            // A raw recording copies each frame into the encoder's own surface, before the
+            // HUD: attach it here, so the copy starts with the recording.
+            if let Some(renderer) = &mut self.renderer {
+                crate::screen_record::sync_capture(renderer);
+            }
         }
         #[cfg(target_os = "android")]
         if self.pad.touch.editor.is_some() {
@@ -15179,11 +15184,16 @@ impl Game<'_> {
                 self.pad
                     .touch_ui
                     .draw(&mut hud, &self.gui.atlas, self.pad_in_menu());
-                self.pad.touch_ui.draw_floating_menu(
-                    &mut hud,
-                    &self.gui.atlas,
-                    &self.pad.touch.settings,
-                );
+                // The overlay button belongs to the menus: it is drawn on the title
+                // screen, the options, the pause menu and the dashboard, and it stays out
+                // of the way during play unless a raw recording has hidden the controls.
+                if self.pad_in_menu() || horizon_client::recorder::hiding_controls() {
+                    self.pad.touch_ui.draw_floating_menu(
+                        &mut hud,
+                        &self.gui.atlas,
+                        &self.pad.touch.settings,
+                    );
+                }
                 if let Some(status) = shader_packs::pending_shader_pack_status() {
                     let mut ui =
                         horizon_client::ui_theme::Ui::mobile(&self.gui.atlas, &mut hud, (0.0, 0.0));
@@ -21354,12 +21364,15 @@ pub fn run() -> Result<()> {
     if options.execution_role.is_client() {
         narrator::start(&early_settings);
     }
-    // "Playing Horizon" on Discord: never for a server; an automated run only talks to a test's fake Discord.
+    // "Playing Volt+" on Discord: never for a server; an automated run only talks to a test's fake Discord.
     if options.dedicated.is_none() {
         let automated = options.benchmark.is_some()
             || options.offscreen
             || options.frames.is_some()
             || options.world_frames.is_some();
+        // The phone publishes through Discord's own service; the desktop, through its socket.
+        #[cfg(target_os = "android")]
+        crate::discord_presence_android::install(automated);
         horizon_client::discord_presence::start(early_settings.extras.discord_presence, automated);
     }
     // Snapshots of derived tables live in the game folder, never beside the

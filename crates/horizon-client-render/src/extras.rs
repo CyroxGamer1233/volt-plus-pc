@@ -112,7 +112,8 @@ pub struct Extras {
     /// Agents may control the game the player starts: it opens its control socket for
     /// horizon-ctl and MCP clients (off by default; an agent's own launch always opens it).
     pub agent_control: bool,
-    /// "Playing Horizon" on the player's Discord profile (`discord_presence`; on by default).
+    /// "Playing Volt+" on the player's Discord profile, with the mode, the dimension and the
+    /// time played (`discord_presence`; on by default).
     pub discord_presence: bool,
 }
 impl Default for Extras {
@@ -470,7 +471,7 @@ impl Item {
                 "Hides and turns off every AI feature: agent control, horizon-ctl and the MCP servers. The launcher's switch too."
             }
             Item::DiscordPresence => {
-                "Shows Playing Horizon on your Discord profile while Discord runs: menus, single player or multiplayer, the dimension and the time played. Never a world's name or a server's address."
+                "Shows Playing Volt+ on your Discord profile while Discord runs: the launcher or the world, the game mode, single player, a server or a LAN world, the dimension, how many players are in it and the time played. Never a world's name or a server's address."
             }
             Item::AgentControl => {
                 "Your own AI agent can play this game through horizon-ctl or an MCP client, on this computer only."

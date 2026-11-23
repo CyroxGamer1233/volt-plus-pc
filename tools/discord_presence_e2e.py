@@ -4,12 +4,14 @@
 Each game gets its own fake Discord IPC server (a Unix socket in a scratch folder, pointed to by
 HORIZON_DISCORD_IPC_DIR) that answers the handshake with READY and records every SET_ACTIVITY.
 The game goes title -> world -> Nether -> quit through horizon-ctl, and the activities must say
-"In the menus", "Singleplayer" in the Overworld, then the Nether, and be cleared on quit:
+"In the Volt+ launcher", "Creative • Singleplayer" in the Overworld, then the Nether, and be
+cleared on quit:
 
     single     single player on its server thread (the default)
     in-frame   single player ticked in the window's frame (--in-frame)
-    lan        a host opens its world to LAN and a guest joins: the guest shows "Multiplayer",
-               the host "Hosting a world" with a party of 2 of 8 (lan-in-frame: the host in-frame)
+    lan        a host opens its world to LAN and a guest joins: the guest shows
+               "Creative • Multiplayer", the host "Creative • LAN world" with a party of 2 of 8
+               (lan-in-frame: the host in-frame)
     setting    off in horizon-extras.txt: nothing reaches Discord; the Horizon Settings switch
                turns it on (the activity appears) and off (it is cleared)
     late       Discord starts after the game: found within the 15 s retry
@@ -123,6 +125,17 @@ def shows(details, state=None):
     return lambda a: isinstance(a, dict) and a.get('details') == details and (state is None or a.get('state') == state)
 
 
+def playing(mode, kind):
+    """The card's first line: `<mode> • <kind>`, plus ", N online" for a server."""
+    prefix = f'{mode} • {kind}'
+    return lambda a: isinstance(a, dict) and str(a.get('details', '')).startswith(prefix)
+
+
+def placed(place):
+    """The card's second line: the dimension, then who is in it."""
+    return lambda a: isinstance(a, dict) and str(a.get('state', '')).startswith(place)
+
+
 class Game:
     """One game started by horizon-ctl in a scratch home, with its own fake Discord."""
 
@@ -164,15 +177,15 @@ def single(bins, args=()):
     game = Game(bins, 'single', args=args)
     d = game.discord
     try:
-        d.wait('title screen', shows('In the menus'))
+        d.wait('title screen', shows('In the Volt+ launcher'))
         assert d.handshakes[0]['v'] == 1 and d.handshakes[0]['client_id'], d.handshakes
         game.ctl_run('open', 'Presence', '5', 'creative')
         game.ctl_run('wait-for', 'loaded', '--timeout', '300')
-        d.wait('in the world', shows('Singleplayer', 'In the Overworld'))
+        d.wait('in the world', lambda a: playing('Creative', 'Singleplayer')(a) and placed('In the Overworld')(a))
         start = d.last()['timestamps']['start']
         assert abs(start - time.time()) < 120 and 'party' not in d.last(), d.last()
         game.ctl_run('command', 'execute in minecraft:the_nether run tp @s 0 80 0')
-        d.wait('in the Nether', shows('Singleplayer', 'In the Nether'))
+        d.wait('in the Nether', lambda a: playing('Creative', 'Singleplayer')(a) and placed('In the Nether')(a))
         assert d.last()['timestamps']['start'] == start, 'a dimension change restarted the clock'
         text = json.dumps(d.activities)
         assert 'Presence' not in text, f'the world name reached Discord: {text}'
@@ -190,14 +203,17 @@ def lan(bins, host_args=()):
         host.ctl_run('wait-for', 'loaded', '--timeout', '300')
         port = lab.free_port()
         host.ctl_run('lan', 'open', str(port))
-        host.discord.wait('host, alone', lambda a: shows('Hosting a world')(a) and a['party']['size'] == [1, 8])
+        host.discord.wait('host, alone', lambda a: playing('Creative', 'LAN world')(a) and a['party']['size'] == [1, 8])
         guest = Game(bins, 'guest')
-        guest.discord.wait('guest title screen', shows('In the menus'))
+        guest.discord.wait('guest title screen', shows('In the Volt+ launcher'))
         guest.ctl_run('connect', f'127.0.0.1:{port}', 'Guest')
         guest.ctl_run('wait-for', 'loaded', '--timeout', '300')
-        guest.discord.wait('guest in the world', shows('Multiplayer', 'In the Overworld'))
+        guest.discord.wait(
+            'guest in the world',
+            lambda a: playing('Creative', 'Multiplayer')(a) and placed('In the Overworld')(a),
+        )
         assert '127.0.0.1' not in json.dumps(guest.discord.activities), guest.discord.activities
-        host.discord.wait('host with a guest', lambda a: shows('Hosting a world')(a) and a['party']['size'] == [2, 8])
+        host.discord.wait('host with a guest', lambda a: playing('Creative', 'LAN world')(a) and a['party']['size'] == [2, 8])
         guest.quit()
         guest.discord.wait('guest cleared on quit', lambda a: a is None)
         host.quit()
@@ -221,7 +237,7 @@ def setting(bins):
         switch = next(w for w in game.ctl_run('ui')['widgets'] if w.get('label', '').startswith('Discord Rich'))
         assert switch['label'] == 'Discord Rich Presence: Off', switch
         game.ctl_run('click', switch['id'])
-        d.wait('turned on', shows('In the menus'))
+        d.wait('turned on', shows('In the Volt+ launcher'))
         game.ctl_run('click', switch['id'])
         d.wait('turned off', lambda a: a is None)
         assert 'discordPresence:false' in (game.home / 'horizon-extras.txt').read_text()
@@ -239,7 +255,7 @@ def late(bins):
         time.sleep(2)
         game.discord.start()
         started = time.time()
-        game.discord.wait('found Discord', shows('In the menus'), timeout=30)
+        game.discord.wait('found Discord', shows('In the Volt+ launcher'), timeout=30)
         print(f'  ok: after {time.time() - started:.1f} s')
         game.quit()
     finally:
