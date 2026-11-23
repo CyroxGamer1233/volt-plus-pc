@@ -4,10 +4,12 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
+import android.content.pm.ResolveInfo;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.util.Log;
+import android.widget.Toast;
 
 import com.discord.socialsdk.rpc.IDiscordRpcCallback;
 import com.discord.socialsdk.rpc.IDiscordRpcConnection;
@@ -15,6 +17,8 @@ import com.discord.socialsdk.rpc.IDiscordRpcService;
 
 import org.json.JSONObject;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -22,20 +26,21 @@ import java.util.UUID;
  *
  * <p>The Discord Android app hosts a bound service ({@code
  * com.discord.socialsdk.rpc.IDiscordRpcService}, the transport its own Social SDK uses) that
- * turns JSON RPC frames into an activity card. This class binds that service, connects with the
- * Volt+ application id and hands over the card the game built; nothing else of Discord's is
- * involved, and no account token is ever seen by this app.
+ * turns JSON RPC frames into an activity card. This class binds that service — wherever it
+ * answers, so a cloned or modified Discord works too — connects with the Volt+ application id
+ * and hands over the card the game built. No account token is ever seen by this app.
  *
  * <p>Everything here runs on the main looper: the game thread only posts, so a slow or missing
- * Discord never costs the game a frame. A Discord that is not running, is killed, or refuses the
- * connection is retried every {@link #RETRY_MILLIS}; the last card is sent again as soon as the
- * service says READY.
+ * Discord never costs the game a frame. A Discord that is not running, was killed, or refuses
+ * the connection is retried every {@link #RETRY_MILLIS}, and the last card is sent again as soon
+ * as the service says READY. When presence cannot work at all, the player is told once, with
+ * the reason, instead of being left with a switch that silently does nothing.
  */
 final class DiscordPresence {
     private static final String TAG = "VoltDiscord";
     /** The bound service Discord's Social SDK publishes presence through. */
     private static final String ACTION = "com.discord.socialsdk.rpc.IDiscordRpcService";
-    /** The Discord app, then the client mods that keep the same service. */
+    /** Tried by name when the package manager cannot be asked (some OEM builds answer neither). */
     private static final String[] CLIENTS = {"com.discord", "cocobo1.pupu.app"};
     private static final String RPC_VERSION = "1";
     /** Volt+ on Discord's developer portal (public: it names the card). */
@@ -46,6 +51,8 @@ final class DiscordPresence {
      */
     private static final int HANDLER_PID = 1;
     private static final long RETRY_MILLIS = 15_000L;
+    /** How long a fresh bind may take before the player is told it did not work. */
+    private static final long EXPLAIN_AFTER_MILLIS = 6_000L;
 
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
 
@@ -58,11 +65,13 @@ final class DiscordPresence {
     /** The card to show: the last one the game built, resent on every READY. */
     private static String card;
     /**
-     * Whether the installed Discord accepts the card's extra fields. A client that answers an
-     * error to buttons or a party keeps the rest of the card: the picture, the links and the
-     * two lines are what the card is for.
+     * How much of the card Discord takes: 0 everything, 1 without the party and the button,
+     * 2 without pictures and links either. A client that answers an error steps down once.
      */
-    private static boolean extended = true;
+    private static int level;
+    /** Why presence is not showing, for the one toast and the log. */
+    private static String reason = "";
+    private static boolean explained;
 
     private DiscordPresence() {}
 
@@ -71,16 +80,30 @@ final class DiscordPresence {
         if (context == null || json == null || json.isEmpty()) {
             return;
         }
-        Context application = context.getApplicationContext();
+        remember(context);
         MAIN.post(
                 () -> {
-                    app = application == null ? context : application;
                     card = json;
                     wanted = true;
                     if (!bound) {
                         bind();
                     } else if (ready) {
                         send();
+                    }
+                });
+    }
+
+    /** Starts binding before any card exists, so DISCORD is ready when the first one arrives. */
+    public static void start(Context context) {
+        if (context == null) {
+            return;
+        }
+        remember(context);
+        MAIN.post(
+                () -> {
+                    wanted = true;
+                    if (!bound) {
+                        bind();
                     }
                 });
     }
@@ -98,40 +121,95 @@ final class DiscordPresence {
                 });
     }
 
+    /** What the presence is doing, for the log and a future diagnostics row. */
+    public static String status() {
+        if (!wanted) {
+            return "off";
+        }
+        if (ready) {
+            return "showing";
+        }
+        if (bound) {
+            return "connecting";
+        }
+        return reason.isEmpty() ? "waiting for Discord" : reason;
+    }
+
+    private static void remember(Context context) {
+        Context application = context.getApplicationContext();
+        app = application == null ? context : application;
+    }
+
     private static void bind() {
         if (app == null || bound) {
             return;
         }
         Intent intent = serviceIntent();
         if (intent == null) {
-            // The Discord app is not installed (or is being updated): try again later.
+            reason = "Discord does not offer its presence service on this device";
+            explainOnce();
             retryLater();
             return;
         }
         try {
             bound = app.bindService(intent, CONNECTION, Context.BIND_AUTO_CREATE);
         } catch (Throwable error) {
-            Log.i(TAG, "Discord's presence service refused binding: " + error);
+            reason = "Discord refused the binding (" + error.getClass().getSimpleName() + ")";
             bound = false;
         }
         if (!bound) {
+            explainOnce();
             retryLater();
+            return;
         }
+        MAIN.removeCallbacks(EXPLAIN);
+        MAIN.postDelayed(EXPLAIN, EXPLAIN_AFTER_MILLIS);
     }
 
-    /** Discord's service as this device has it, or {@code null} when neither client is there. */
+    /**
+     * Every app on this device that offers the presence service: Discord itself, a clone, or a
+     * client mod (they all keep the same action). The known packages are tried first.
+     */
     private static Intent serviceIntent() {
         for (String client : CLIENTS) {
             Intent intent = new Intent(ACTION).setPackage(client);
-            try {
-                if (app.getPackageManager().resolveService(intent, 0) != null) {
-                    return intent;
-                }
-            } catch (Throwable ignored) {
-                // A package that cannot be resolved is one this device does not have.
+            if (resolves(intent)) {
+                return intent;
+            }
+        }
+        for (String pkg : offeringPackages()) {
+            Intent intent = new Intent(ACTION).setPackage(pkg);
+            if (resolves(intent)) {
+                return intent;
             }
         }
         return null;
+    }
+
+    private static boolean resolves(Intent intent) {
+        try {
+            return app.getPackageManager().resolveService(intent, 0) != null;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static List<String> offeringPackages() {
+        List<String> packages = new ArrayList<>();
+        try {
+            List<ResolveInfo> found =
+                    app.getPackageManager().queryIntentServices(new Intent(ACTION), 0);
+            for (ResolveInfo info : found) {
+                if (info.serviceInfo != null
+                        && info.serviceInfo.packageName != null
+                        && !packages.contains(info.serviceInfo.packageName)) {
+                    packages.add(info.serviceInfo.packageName);
+                }
+            }
+        } catch (Throwable ignored) {
+            // No visibility of other packages: the two known ones were already tried.
+        }
+        return packages;
     }
 
     private static void connect() {
@@ -143,12 +221,14 @@ final class DiscordPresence {
             fresh = service.connect(APPLICATION_ID, RPC_VERSION, CALLBACK);
         } catch (Throwable error) {
             Log.i(TAG, "Discord refused the connection: " + error);
+            reason = "Discord refused the connection (" + error.getClass().getSimpleName() + ")";
             fresh = null;
         }
         connection = fresh;
         ready = false;
         if (fresh == null) {
             detach();
+            explainOnce();
             retryLater();
         }
     }
@@ -158,15 +238,29 @@ final class DiscordPresence {
         if (card == null || !ready) {
             return;
         }
-        flush(cardFrame(extended ? card : withoutExtras(card)));
+        String activity = level == 0 ? card : reduced(card, level);
+        if (activity == null) {
+            return;
+        }
+        flush(cardFrame(activity));
     }
 
-    /** The card without the fields an older Discord client refuses. */
-    private static String withoutExtras(String activity) {
+    /** The card without the fields a client refused: first the party and button, then more. */
+    private static String reduced(String activity, int depth) {
         try {
             JSONObject card = new JSONObject(activity);
-            card.remove("buttons");
-            card.remove("party");
+            if (depth >= 1) {
+                card.remove("buttons");
+                card.remove("party");
+            }
+            if (depth >= 2) {
+                card.remove("assets");
+                card.remove("details_url");
+                card.remove("state_url");
+                card.remove("status_display_type");
+                card.remove("type");
+                card.remove("name");
+            }
             return card.toString();
         } catch (Throwable error) {
             return null;
@@ -183,6 +277,7 @@ final class DiscordPresence {
             target.sendFrame(frame);
         } catch (Throwable error) {
             Log.i(TAG, "Discord presence dropped: " + error);
+            reason = "Discord dropped the connection (" + error.getClass().getSimpleName() + ")";
             detach();
             retryLater();
         }
@@ -245,6 +340,24 @@ final class DiscordPresence {
         }
     }
 
+    /** One toast per session: a switch that does nothing is worse than a sentence. */
+    private static void explainOnce() {
+        if (explained || app == null) {
+            return;
+        }
+        explained = true;
+        String text = "Discord presence: " + status();
+        Log.i(TAG, text);
+        MAIN.post(
+                () -> {
+                    try {
+                        Toast.makeText(app, text, Toast.LENGTH_LONG).show();
+                    } catch (Throwable ignored) {
+                        // A toast needs a running looper; the log has it either way.
+                    }
+                });
+    }
+
     private static void retryLater() {
         if (!wanted) {
             return;
@@ -258,6 +371,17 @@ final class DiscordPresence {
             bind();
         }
     };
+
+    /** A bind that never produced a READY: say so, once, and keep retrying quietly. */
+    private static final Runnable EXPLAIN =
+            () -> {
+                if (wanted && !ready) {
+                    if (reason.isEmpty()) {
+                        reason = "Discord did not answer its presence service";
+                    }
+                    explainOnce();
+                }
+            };
 
     private static final ServiceConnection CONNECTION =
             new ServiceConnection() {
@@ -290,19 +414,23 @@ final class DiscordPresence {
                         MAIN.post(
                                 () -> {
                                     ready = true;
+                                    reason = "";
+                                    MAIN.removeCallbacks(EXPLAIN);
                                     if (wanted) {
                                         send();
                                     }
                                 });
                     } else if (frame.contains("\"ERROR\"")) {
-                        // A card Discord did not like; the log keeps the reason for the report.
+                        // A card Discord did not like: step down instead of showing nothing.
                         Log.i(TAG, "Discord presence answered an error: " + frame);
                         MAIN.post(
                                 () -> {
-                                    if (extended && card != null) {
-                                        extended = false;
-                                        send();
+                                    if (card == null || level >= 2) {
+                                        return;
                                     }
+                                    level += 1;
+                                    send();
+                                    explainOnce();
                                 });
                     }
                 }
@@ -314,6 +442,10 @@ final class DiscordPresence {
                                 Log.i(TAG, "Discord closed the presence (" + code + ": " + message + ")");
                                 ready = false;
                                 connection = null;
+                                if (code == 4000) {
+                                    reason = "Discord does not know this application id";
+                                    explainOnce();
+                                }
                                 retryLater();
                             });
                 }

@@ -19,6 +19,18 @@ pub fn install(automated: bool) {
         publish,
         clear,
     });
+    // Bind now rather than on the first card: Discord's READY takes a moment, and the title
+    // screen's card should not be the thing that pays for it.
+    let _ = crate::platform::with_context(|env, activity| {
+        let class = crate::platform::app_class(env, activity, CLASS_NAME)?;
+        env.call_static_method(
+            class,
+            "start",
+            "(Landroid/content/Context;)V",
+            &[JValue::Object(activity)],
+        )?;
+        Ok(())
+    });
 }
 
 /// One card, as the game built it. Discord's card needs the activity, the app id is the Java
