@@ -32,6 +32,10 @@ pub struct TouchUi {
     /// and hit-testing subtracts this same angle, so the ring and the taps agree even
     /// mid-animation.
     pub wheel_angle: Cell<f32>,
+    /// 0 shows the wheel home page, 1 shows the open category's page.
+    pub hub_page: u8,
+    /// Pop-in progress for the home page, eased the same way as every other transition.
+    pub page_anim: Cell<f32>,
     pub hub_scroll_drag: Option<(u64, f32, f32, bool)>,
     pub presets_modal_open: bool,
     pub preset_dialog: Option<PresetDialogState>,
@@ -88,6 +92,8 @@ impl Default for TouchUi {
             hub_scroll: 0.0,
             hub_max_scroll: Cell::new(0.0),
             wheel_angle: Cell::new(0.0),
+            hub_page: 0,
+            page_anim: Cell::new(0.0),
             hub_scroll_drag: None,
             presets_modal_open: false,
             preset_dialog: None,
@@ -1750,6 +1756,16 @@ fn hub_metrics(w: f32, h: f32) -> (f32, f32, f32, f32, f32, f32, f32, f32, f32) 
     (dw, dh, dx, dy, side_w, cx, cw, body_top, body_h)
 }
 
+/// The home page's wheel: bigger than the sidebar one, centred in the left of the panel,
+/// with the readouts living to its right the way the mockup places them.
+fn hub_home_wheel(dx: f32, dy: f32, dw: f32, dh: f32) -> (f32, f32, f32) {
+    let height = (dh - 70.0).max(120.0);
+    let cx = dx + dw * 0.30;
+    let cy = dy + 48.0 + height * 0.5;
+    let r = (height * 0.34).clamp(56.0, 132.0);
+    (cx, cy, r)
+}
+
 /// Where the category wheel sits: the centre of the sidebar and the radius of its ring.
 ///
 /// The six categories ride this circle instead of a vertical list, so a thumb reaches any of
@@ -2365,6 +2381,39 @@ impl TouchUi {
                 return Some(InGameMenuAction::Close);
             }
 
+            // The header tile is the way back out of a category page.
+            if self.hub_page == 1 && inside([dx + 14.0, dy + 9.0, 32.0, 30.0]) {
+                self.hub_page = 0;
+                self.page_anim.set(0.0);
+                return Some(InGameMenuAction::Close);
+            }
+
+            // Home page: the ring is the navigation, and a tap on a segment opens that
+            // category's own page.
+            if self.hub_page == 0 {
+                let (hcx, hcy, hr) = hub_home_wheel(dx, dy, dw, dh);
+                let off_x = p[0] - hcx;
+                let off_y = p[1] - hcy;
+                let reach = (off_x * off_x + off_y * off_y).sqrt();
+                if (hr - 30.0..=hr + 26.0).contains(&reach) {
+                    let step = std::f32::consts::TAU / 6.0;
+                    let mut angle = off_x.atan2(-off_y);
+                    if angle < 0.0 {
+                        angle += std::f32::consts::TAU;
+                    }
+                    let rot = -(self.hub_tab as f32) * step;
+                    let ti =
+                        (((((angle - rot) + step * 0.5) / step).floor() as i64).rem_euclid(6)) as u8;
+                    self.hub_tab = ti;
+                    self.hub_scroll = 0.0;
+                    self.hub_page = 1;
+                    self.tab_anim.set(0.0);
+                    self.last_anim_tick.set(None);
+                    self.refresh_presets_cache(settings.control_style);
+                }
+                return Some(InGameMenuAction::Close);
+            }
+
             // Left navigation wheel: Recommended, Controls, Aiming, Buttons, Advanced and
             // Record ride a ring. Segment 0 is centred at the top and the rest follow
             // clockwise, so the order reads the same as the old column did.
@@ -2956,7 +3005,17 @@ impl TouchUi {
         // Top Header Bar with Active Control System Mode Badge
         ui.rounded(dx + 14.0, dy + 9.0, 30.0, 30.0, 9.0, card_sel);
         ui.border(dx + 14.0, dy + 9.0, 30.0, 30.0, 9.0, accent);
-        ui.icon(Icon::HorizonLogo, dx + 20.0, dy + 15.0, 18.0, accent_hi);
+        if self.hub_page == 1 {
+            ui.centered_fit(
+                Face::SemiBold,
+                15.0,
+                [dx + 14.0, dy + 9.0, 30.0, 30.0],
+                accent_hi,
+                "\u{2039}",
+            );
+        } else {
+            ui.icon(Icon::HorizonLogo, dx + 20.0, dy + 15.0, 18.0, accent_hi);
+        }
         ui.text(
             Face::SemiBold,
             13.5,
@@ -3005,6 +3064,122 @@ impl TouchUi {
             (Icon::Flask, "Advanced"),
             (Icon::Monitor, "Record"),
         ];
+        if self.hub_page == 0 {
+            let (hcx, hcy, hr) = hub_home_wheel(dx, dy, dw, dh);
+            let anim = {
+                let a = self.page_anim.get();
+                let next = a + (1.0 - a) * 0.30;
+                let next = if (1.0 - next) < 0.01 { 1.0 } else { next };
+                self.page_anim.set(next);
+                next
+            };
+            let cy = hcy + (1.0 - anim) * 10.0;
+            let home_span = std::f32::consts::TAU / 6.0;
+            let home_top = -std::f32::consts::FRAC_PI_2;
+            let home_rot = -(self.hub_tab as f32) * home_span;
+            let ring = hr + 16.0;
+            ui.rounded(
+                hcx - ring,
+                cy - ring,
+                ring * 2.0,
+                ring * 2.0,
+                ring,
+                rgba(0, 0, 0, 70),
+            );
+            ui.stroke_rounded(
+                hcx - ring,
+                cy - ring,
+                ring * 2.0,
+                ring * 2.0,
+                ring,
+                1.2,
+                border_c,
+            );
+            for (ti, (ic, lbl)) in tabs.iter().enumerate() {
+                let active = self.hub_tab == ti as u8;
+                let centre = home_top + home_span * ti as f32 + home_rot;
+                let dots = 13;
+                for k in 0..dots {
+                    let t = k as f32 / (dots - 1) as f32;
+                    let angle = centre + (t - 0.5) * (home_span - 0.14);
+                    let dot = if active { 12.0 } else { 6.0 };
+                    let x = hcx + angle.cos() * hr;
+                    let y = cy + angle.sin() * hr;
+                    ui.rounded(
+                        x - dot * 0.5,
+                        y - dot * 0.5,
+                        dot,
+                        dot,
+                        dot * 0.5,
+                        if active {
+                            accent
+                        } else {
+                            color::with_alpha(muted_c, 0.62)
+                        },
+                    );
+                }
+                let ix = hcx + centre.cos() * hr;
+                let iy = cy + centre.sin() * hr;
+                ui.icon(
+                    *ic,
+                    ix - 9.0,
+                    iy - 9.0,
+                    18.0,
+                    if active { accent_fg } else { muted_c },
+                );
+                if active {
+                    let lx = hcx + centre.cos() * (hr + 30.0) - 44.0;
+                    let ly = cy + centre.sin() * (hr + 30.0) - 6.0;
+                    ui.centered_fit(Face::SemiBold, 8.8, [lx, ly, 88.0, 12.0], text_c, *lbl);
+                }
+            }
+            // The centre disc carries the headline value, as the mockup's does.
+            ui.rounded(hcx - 54.0, cy - 54.0, 108.0, 108.0, 54.0, card_sel);
+            ui.border(hcx - 54.0, cy - 54.0, 108.0, 108.0, 54.0, accent);
+            let headline = format!("{}%", settings.resolution_scale_percent);
+            ui.centered_fit(
+                Face::SemiBold,
+                27.0,
+                [hcx - 52.0, cy - 24.0, 104.0, 32.0],
+                text_c,
+                &headline,
+            );
+            ui.centered_fit(
+                Face::Regular,
+                8.4,
+                [hcx - 52.0, cy + 10.0, 104.0, 12.0],
+                muted_c,
+                "resolution",
+            );
+            // Live readouts sit to the right of the ring.
+            let rx = dx + dw * 0.56;
+            let rw = (dw - (rx - dx) - 18.0).max(120.0);
+            let look = format!("{:.0}%", settings.sensitivity * 100.0 / 3.0);
+            let system = if settings.control_style == ControlStyle::Mcpe {
+                "MCPE"
+            } else {
+                "GoyControl"
+            };
+            let mut ry = dy + 62.0;
+            for (label, value) in [("Touch look", look.as_str()), ("Control system", system)] {
+                ui.rounded(rx, ry, rw, 46.0, 12.0, card_bg);
+                ui.border(rx, ry, rw, 46.0, 12.0, border_c);
+                ui.text(Face::Regular, 8.8, rx + 14.0, ry + 9.0, muted_c, label);
+                ui.text(Face::SemiBold, 15.0, rx + 14.0, ry + 21.0, text_c, value);
+                ry += 56.0;
+            }
+            ui.text(
+                Face::Regular,
+                9.0,
+                rx,
+                ry + 6.0,
+                muted_c,
+                "Tap a category to open it",
+            );
+            ui.finish();
+            return;
+        }
+
         let (wcx, wcy, wr) = hub_wheel(dx, dy, side_w, dh);
         let wheel_span = std::f32::consts::TAU / 6.0;
         let wheel_top = -std::f32::consts::FRAC_PI_2;
