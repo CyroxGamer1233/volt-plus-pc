@@ -251,6 +251,14 @@ pub fn start() {
     };
     let frames = settings.frames() as i32;
     let audio = settings.audio as i32;
+    // A raw recording with no audio needs no screen capture at all: the game copies each
+    // frame, before its HUD, into the encoder's own surface. The controls stay on screen and
+    // the video has the game alone. Anything else (audio, or the controls wanted in the
+    // video) records the display, as before.
+    if !settings.record_controls && audio == 0 {
+        start_engine(width, height, frames);
+        return;
+    }
     let result = crate::platform::with_context(|env, activity| {
         let class = recorder_class(env, activity)?;
         let value = env
@@ -281,8 +289,175 @@ pub fn start() {
     }
 }
 
+/// Starts a recording of the game's own frames: `EngineRecorder.java` opens a MediaCodec
+/// encoder, the game renders into its surface (HUD-free, see `render_target`), and the
+/// codec's output goes to the same `Movies/VoltPlus` folder as a screen recording.
+fn start_engine(width: u32, height: u32, frames: i32) {
+    release_capture();
+    let result = crate::platform::with_context(|env, activity| {
+        let class = recorder_class(env, activity)?;
+        let value = env
+            .call_static_method(
+                class,
+                "startEngine",
+                "(Landroid/app/Activity;III)Ljava/lang/String;",
+                &[
+                    JValue::Object(activity),
+                    JValue::Int(width.max(160) as i32),
+                    JValue::Int(height as i32),
+                    JValue::Int(frames),
+                ],
+            )?
+            .l()?;
+        let note = text(env, value)?;
+        let surface = env
+            .call_static_method(class, "engineSurface", "()Landroid/view/Surface;", &[])?
+            .l()?;
+        // The window keeps its own reference to the surface (the codec's); the one taken
+        // here is never released, so a frame still in flight when the recording stops
+        // always has a live window behind it.
+        let window = if surface.is_null() {
+            0
+        } else {
+            let raw = surface.into_raw();
+            unsafe { ANativeWindow_fromSurface(env.get_native_interface(), raw) as usize }
+        };
+        Ok((note, window))
+    });
+    let Some((note, window)) = result else {
+        let mut status = recorder::status();
+        status.phase = Phase::Error;
+        status.message = "the recorder service could not be reached".to_owned();
+        recorder::publish(status);
+        return;
+    };
+    let Some((width, height)) = engine_size(&note) else {
+        // The encoder refused (or told us nothing): show why, and start nothing.
+        publish_state(&note);
+        return;
+    };
+    // The size the encoder chose is not something the overlay says: it reads it from the
+    // status the recorder reports from now on.
+    publish_state("recording;");
+    if window == 0 {
+        let _ = crate::platform::with_context(|env, activity| {
+            let class = recorder_class(env, activity)?;
+            env.call_static_method(class, "stop", "()Ljava/lang/String;", &[])?;
+            Ok(())
+        });
+        let mut status = recorder::status();
+        status.phase = Phase::Error;
+        status.message = "the encoder gave no surface to render into".to_owned();
+        recorder::publish(status);
+        return;
+    }
+    recorder::set_capture_target(Some(recorder::CaptureTarget {
+        window,
+        width,
+        height,
+        serial: recorder::next_capture_serial(),
+    }));
+}
+
+/// `recording;1280x720`: the size the encoder settled on, from `startEngine`'s answer.
+fn engine_size(note: &str) -> Option<(u32, u32)> {
+    let (state, rest) = note.split_once(';')?;
+    if state != "recording" {
+        return None;
+    }
+    let (width, height) = rest.split_once('x')?;
+    let width = width.trim().parse::<u32>().ok()?;
+    let height = height.trim().parse::<u32>().ok()?;
+    (width > 0 && height > 0).then_some((width, height))
+}
+
+/// Drops the engine capture, so the renderer stops copying frames into the encoder.
+fn release_capture() {
+    let _ = recorder::set_capture_target(None);
+}
+
+/// Hands the recorder's surface to the renderer, or takes it away again. Called once a frame
+/// while a recording can be running; a surface that cannot be made ends the recording with a
+/// sentence instead of leaving an empty video behind.
+pub fn sync_capture(renderer: &mut horizon_client_render::gfx::Renderer) {
+    static ATTEMPTED: Mutex<u64> = Mutex::new(0);
+    let mut attempted = ATTEMPTED.lock().unwrap_or_else(|e| e.into_inner());
+    let want = recorder::capture_target();
+    let Some(target) = want else {
+        if renderer.record_serial() != 0 || renderer.record_window() != 0 {
+            renderer.set_record_surface(None, [0, 0], 0, 0);
+        }
+        *attempted = 0;
+        return;
+    };
+    if *attempted == target.serial {
+        if renderer.record_serial() == 0 {
+            // The surface could not be configured: stop rather than record nothing.
+            *attempted = 0;
+            release_capture();
+            stop();
+        }
+        return;
+    }
+    *attempted = target.serial;
+    let surface = build_capture_surface(renderer.instance(), target.window);
+    match surface {
+        Some(surface) => renderer.set_record_surface(
+            Some(surface),
+            [target.width, target.height],
+            target.serial,
+            target.window,
+        ),
+        None => {
+            *attempted = 0;
+            release_capture();
+            let mut status = recorder::status();
+            status.message =
+                "this device could not capture the game's own frames, so the recording stopped"
+                    .to_owned();
+            recorder::publish(status);
+            stop();
+        }
+    }
+}
+
+/// The encoder's `Surface` as a swapchain the renderer can draw into.
+fn build_capture_surface(
+    instance: &wgpu::Instance,
+    window: usize,
+) -> Option<wgpu::Surface<'static>> {
+    use winit::raw_window_handle::{
+        AndroidDisplayHandle, AndroidNdkWindowHandle, RawDisplayHandle, RawWindowHandle,
+    };
+    let non_null = std::ptr::NonNull::new(window as *mut std::ffi::c_void)?;
+    let handle = RawWindowHandle::AndroidNdk(AndroidNdkWindowHandle::new(non_null));
+    let display = RawDisplayHandle::Android(AndroidDisplayHandle::new());
+    // The window is owned by the codec and outlives this surface (see `start_engine`).
+    unsafe {
+        instance
+            .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
+                raw_display_handle: display,
+                raw_window_handle: handle,
+            })
+            .ok()
+    }
+}
+
+#[cfg(target_os = "android")]
+#[link(name = "android")]
+unsafe extern "C" {
+    /// The codec's surface as a native window; the reference stays with the game.
+    fn ANativeWindow_fromSurface(
+        env: *mut jni::sys::JNIEnv,
+        surface: jni::sys::jobject,
+    ) -> *mut std::ffi::c_void;
+}
+
 /// Ends the recording; the service finalises the file before the phase turns to `Saved`.
 pub fn stop() {
+    // The renderer lets go of the encoder's surface on its next frame, before the encoder
+    // itself is stopped: nothing is presented to a surface that is going away.
+    release_capture();
     let result = crate::platform::with_context(|env, activity| {
         let class = recorder_class(env, activity)?;
         let value = env

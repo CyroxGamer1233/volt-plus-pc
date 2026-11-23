@@ -95,6 +95,47 @@ public final class ScreenRecorder {
                 + device;
     }
 
+    /** Whether any recording is running: the display's, or the game's own frames. */
+    static boolean busy() {
+        return RecorderService.busy() || EngineRecorder.busy();
+    }
+
+    /**
+     * Records the game's own frames at {@code w x h}, {@code f} frames a second: no display
+     * capture, no consent prompt, and the touch controls stay on screen without appearing in
+     * the video (the renderer copies each frame into the encoder's surface before the HUD).
+     * Answers {@code recording;WxH} with the size the device accepted.
+     */
+    public static synchronized String startEngine(
+            android.app.Activity activity, int w, int h, int f) {
+        if (activity == null) {
+            return "error;no window to record";
+        }
+        if (busy()) {
+            return "recording;already recording";
+        }
+        uri = "";
+        bytes = 0L;
+        startedAt = System.currentTimeMillis();
+        message = "";
+        String answer = EngineRecorder.start(activity.getApplicationContext(), w, h, f);
+        if (answer.startsWith("recording;")) {
+            state = "recording";
+        } else if (answer.startsWith("error;")) {
+            state = "error";
+            message = answer.substring("error;".length());
+        } else if (answer.startsWith("unsupported;")) {
+            state = "unsupported";
+            message = answer.substring("unsupported;".length());
+        }
+        return answer;
+    }
+
+    /** The encoder's own surface, while the game's frames are being recorded. */
+    public static synchronized android.view.Surface engineSurface() {
+        return EngineRecorder.surface();
+    }
+
     /**
      * Asks for screen capture at {@code w x h}, {@code f} frames a second. The size is a request:
      * {@link RecorderService} fits it to the display and the device's encoder. Returns a
@@ -105,7 +146,7 @@ public final class ScreenRecorder {
         if (activity == null) {
             return "error;no window to record";
         }
-        if (RecorderService.busy()) {
+        if (busy()) {
             return "recording;already recording";
         }
         if ("asking".equals(state)) {
@@ -209,9 +250,13 @@ public final class ScreenRecorder {
 
     /** Ends the current recording; the service finalises the file first. */
     public static synchronized String stop() {
-        if (!RecorderService.busy()) {
+        if (!busy()) {
             state = "idle";
             return "idle;nothing is recording";
+        }
+        if (EngineRecorder.busy()) {
+            state = "stopping";
+            return EngineRecorder.stop();
         }
         state = "stopping";
         RecorderService.stopNow("saved");

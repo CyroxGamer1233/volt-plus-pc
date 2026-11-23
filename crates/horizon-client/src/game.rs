@@ -15106,6 +15106,11 @@ impl Game<'_> {
             if let Some(hidden) = horizon_client::recorder::sync_controls(self.ui.hide_gui) {
                 self.ui.hide_gui = hidden;
             }
+            // A raw recording copies each frame into the encoder's own surface, before the
+            // HUD: attach it here, so the copy starts with the recording.
+            if let Some(renderer) = &mut self.renderer {
+                crate::screen_record::sync_capture(renderer);
+            }
         }
         #[cfg(target_os = "android")]
         if self.pad.touch.editor.is_some() {

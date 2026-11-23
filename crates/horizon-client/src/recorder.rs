@@ -227,11 +227,52 @@ pub fn publish(next: Status) {
     *status_lock().lock().unwrap_or_else(|e| e.into_inner()) = next;
 }
 
-/// Whether the touch controls and HUD should be kept off screen for the recording:
-/// a raw recording (`record_controls` off) leaves them out of the video.
+/// Whether the touch controls and HUD should be kept off screen for the recording.
+///
+/// A raw recording (`record_controls` off) normally has the engine copy HUD-free frames into
+/// the encoder's own surface, so the screen keeps its controls while the video has none: then
+/// nothing is hidden. Only the fallback — the platform recording the screen instead — has to
+/// take the overlay off the display, and [`capture_target`] is `None` exactly then.
 pub fn hiding_controls() -> bool {
     let (raw, status) = (!settings().record_controls, status());
-    raw && status.phase == Phase::Recording
+    raw && status.phase == Phase::Recording && capture_target().is_none()
+}
+
+/// The encoder's own surface while the engine records its frames: the `ANativeWindow` the
+/// renderer copies each HUD-free frame into, the size to render it at, and a serial that
+/// names this attachment (the renderer compares it to know when to build a new surface).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CaptureTarget {
+    pub window: usize,
+    pub width: u32,
+    pub height: u32,
+    pub serial: u64,
+}
+
+static CAPTURE_TARGET: OnceLock<Mutex<Option<CaptureTarget>>> = OnceLock::new();
+static CAPTURE_SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// The capture the game should render into, when the recorder asked for the engine's frames.
+pub fn capture_target() -> Option<CaptureTarget> {
+    *CAPTURE_TARGET
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+}
+
+/// Points the renderer at a new capture, or clears it. Answers with what was attached before,
+/// so the caller can free it.
+pub fn set_capture_target(next: Option<CaptureTarget>) -> Option<CaptureTarget> {
+    let mut guard = CAPTURE_TARGET
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    std::mem::replace(&mut guard, next)
+}
+
+/// A serial no earlier capture used, so the renderer rebuilds its surface exactly once.
+pub fn next_capture_serial() -> u64 {
+    CAPTURE_SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 /// `1.2 MB`, `930 kB`: a recording's size as the list shows it.
