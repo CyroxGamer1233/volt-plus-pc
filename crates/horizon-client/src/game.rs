@@ -21359,7 +21359,7 @@ pub fn run() -> Result<()> {
     if options.execution_role.is_client() {
         narrator::start(&early_settings);
     }
-    // "Playing Horizon" on Discord: never for a server; an automated run only talks to a test's fake Discord.
+    // "Playing Volt+" on Discord: never for a server; an automated run only talks to a test's fake Discord.
     if options.dedicated.is_none() {
         let automated = options.benchmark.is_some()
             || options.offscreen

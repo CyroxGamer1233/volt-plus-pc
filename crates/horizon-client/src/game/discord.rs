@@ -29,8 +29,11 @@ impl Game<'_> {
                 },
                 _ => Play::Singleplayer,
             }
-        } else if self.remote.is_some() {
-            Play::Multiplayer
+        } else if let Some(remote) = &self.remote {
+            // How many the server lists; its address and name are never sent.
+            Play::Multiplayer {
+                players: remote.player_count(),
+            }
         } else {
             Play::Singleplayer
         };

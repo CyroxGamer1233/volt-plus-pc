@@ -245,10 +245,13 @@ presentation, so `bench` reports what is on screen.
 ### Discord Rich Presence
 
 While Discord runs on the same computer, the player's Discord profile shows
-"Playing Horizon" and what they are doing: "In the menus", "Singleplayer",
-"Multiplayer" or "Hosting a world" (with the party size, of 8), the dimension
-("In the Nether") and the time since they entered the world. It never shows a
-world's name or a server's address. Horizon Settings has the switch
+"Playing Volt+" and what they are doing, as detailed as Discord's card allows:
+two lines of text ("Creative • Singleplayer", then "In the Overworld"; a
+server adds how many players it lists, a LAN world how many of the 8 are in),
+the dimension's picture beside the logo with the version as its tooltip, a
+clock counting from the moment the world was entered (the session, in the
+menus), and a button to the download page. It never shows a world's name or a
+server's address. Settings has the switch
 (**Discord Rich Presence**, on by default; `discordPresence` in
 `horizon-extras.txt`), and `HORIZON_NO_DISCORD=1` turns it off for one run.
 
@@ -261,8 +264,12 @@ only talk to a fake Discord: `lab.game_env` sets `HORIZON_NO_DISCORD=1`, and
 `tools/discord_presence_e2e.py` points games at a fake server with
 `HORIZON_DISCORD_IPC_DIR` (title, world, Nether and quit on both single-player
 paths; a LAN host and guest; the switch; a Discord started after the game).
-`DISCORD_APP_ID` is Discord's "Horizon" application, whose `horizon` image is
-the large one; there are no game-mode images yet.
+`DISCORD_APP_ID` is Discord's "Volt+" application; its Rich Presence assets are
+`volt` (the large logo) and `overworld`, `nether`, `end` (the small dimension
+pictures), uploaded under those names in the developer portal. Discord offers
+no Rich Presence to apps on a phone — the mobile client has no IPC socket — so
+the card appears from the desktop build of the client, not from the Android
+one, which is why the switch is on but silent there.
 
 ### Play on another of your machines
 
