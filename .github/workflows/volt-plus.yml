@@ -204,16 +204,26 @@ jobs:
               sensitive = [v for k, v in os.environ.items() if v and ('PASSWORD' in k or 'TOKEN' in k or 'KEYSTORE' in k or k.endswith('_KEY'))]
               # Put the actual diagnostics where the run's annotations show them.
               seen = set()
-              for line in lines:
-                  clean = re.sub(r'\x1b\[[0-9;]*m', '', line).strip()
+              stripped = [re.sub(r'\x1b\[[0-9;]*m', '', line).strip() for line in lines]
+              for index, clean in enumerate(stripped):
                   if not re.search(r'\berror\b', clean):
                       continue
                   if clean in seen:
                       continue
-                  for value in sensitive:
-                      clean = clean.replace(value, '[redacted]')
+                  # Keep the diagnostic with its file, line and help text: the annotation is
+                  # all that can be read back when the raw log is not reachable.
+                  detail = [clean]
+                  for follow in stripped[index + 1:index + 8]:
+                      if not follow or follow in seen:
+                          break
+                      detail.append(follow)
                   seen.add(clean)
-                  print('::error::' + clean[:900].replace('%', '%25'))
+                  for value in sensitive:
+                      for position, item in enumerate(detail):
+                          detail[position] = item.replace(value, '[redacted]')
+                  message = ('\n'.join(detail))[:3800]
+                  message = message.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+                  print('::error::' + message)
                   if len(seen) >= 9:
                       break
               for line in lines[-40:]:
@@ -221,7 +231,8 @@ jobs:
                   for value in sensitive:
                       line = line.replace(value, '[redacted]')
                   line = re.sub(r'[A-Za-z0-9+/]{120,}={0,2}', '[redacted]', line)
-                  print('::notice::' + line[:450].replace('%', '%25'))
+                  line = line[:450].replace('%', '%25').replace('\r', '%0D')
+                  print('::notice::' + line)
           PY
       - name: Collect only audited APK and public metadata
         env:

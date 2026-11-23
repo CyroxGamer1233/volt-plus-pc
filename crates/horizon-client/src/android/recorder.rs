@@ -298,7 +298,7 @@ fn start_engine(width: u32, height: u32, frames: i32) {
         let class = recorder_class(env, activity)?;
         let value = env
             .call_static_method(
-                class,
+                class.clone(),
                 "startEngine",
                 "(Landroid/app/Activity;III)Ljava/lang/String;",
                 &[
@@ -436,7 +436,7 @@ fn build_capture_surface(
     unsafe {
         instance
             .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
-                raw_display_handle: display,
+                raw_display_handle: Some(display),
                 raw_window_handle: handle,
             })
             .ok()
