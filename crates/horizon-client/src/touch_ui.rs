@@ -1746,6 +1746,18 @@ fn hub_metrics(w: f32, h: f32) -> (f32, f32, f32, f32, f32, f32, f32, f32, f32) 
     (dw, dh, dx, dy, side_w, cx, cw, body_top, body_h)
 }
 
+/// Where the category wheel sits: the centre of the sidebar and the radius of its ring.
+///
+/// The six categories ride this circle instead of a vertical list, so a thumb reaches any of
+/// them with the same short travel — the sidebar never asks for a careful vertical aim.
+fn hub_wheel(dx: f32, dy: f32, side_w: f32, dh: f32) -> (f32, f32, f32) {
+    let cx = dx + side_w * 0.5;
+    let cy = dy + 48.0 + (dh - 50.0) * 0.5;
+    let tallest = (((dh - 50.0) * 0.5) - 22.0).max(40.0);
+    let r = (((side_w * 0.5) - 18.0).max(40.0)).min(tallest);
+    (cx, cy, r)
+}
+
 impl TouchUi {
     fn step_animations(&self) -> (f32, f32) {
         let open_target = if self.floating_menu { 1.0 } else { 0.0 };
@@ -2349,20 +2361,27 @@ impl TouchUi {
                 return Some(InGameMenuAction::Close);
             }
 
-            // Left Sidebar Category Tabs (Recommended, Controls, Aiming, Buttons,
-            // Advanced, Record)
-            let tab_start_y = dy + 52.0;
-            for ti in 0..6u8 {
-                let ty = tab_start_y + ti as f32 * 34.0;
-                if inside([dx + 10.0, ty, side_w - 16.0, 30.0]) {
-                    if self.hub_tab != ti {
-                        self.hub_tab = ti;
-                        self.hub_scroll = 0.0;
-                        self.tab_anim.set(0.0);
-                        self.last_anim_tick.set(None);
-                    }
-                    return Some(InGameMenuAction::Close);
+            // Left navigation wheel: Recommended, Controls, Aiming, Buttons, Advanced and
+            // Record ride a ring. Segment 0 is centred at the top and the rest follow
+            // clockwise, so the order reads the same as the old column did.
+            let (wcx, wcy, wr) = hub_wheel(dx, dy, side_w, dh);
+            let off_x = p[0] - wcx;
+            let off_y = p[1] - wcy;
+            let reach = (off_x * off_x + off_y * off_y).sqrt();
+            if (wr - 26.0..=wr + 20.0).contains(&reach) {
+                let step = std::f32::consts::TAU / 6.0;
+                let mut angle = off_x.atan2(-off_y);
+                if angle < 0.0 {
+                    angle += std::f32::consts::TAU;
                 }
+                let ti = ((((angle + step * 0.5) / step).floor() as i64).rem_euclid(6)) as u8;
+                if self.hub_tab != ti {
+                    self.hub_tab = ti;
+                    self.hub_scroll = 0.0;
+                    self.tab_anim.set(0.0);
+                    self.last_anim_tick.set(None);
+                }
+                return Some(InGameMenuAction::Close);
             }
 
             // Check if touch started on sliders or quick chips in Tab 0 (Recommended)
@@ -2885,8 +2904,10 @@ impl TouchUi {
                         bubble_alpha,
                     ),
                 );
+                // The button is Volt+'s own: the mark, not a glyph, so it is recognisable
+                // at a glance in a menu.
                 ui.icon(
-                    Icon::MenuEquals,
+                    Icon::HorizonLogo,
                     btn_x + (btn_w - 22.0) * 0.5,
                     btn_y + (btn_h - 22.0) * 0.5,
                     22.0,
@@ -2986,26 +3007,64 @@ impl TouchUi {
             (Icon::Flask, "Advanced"),
             (Icon::Monitor, "Record"),
         ];
-        let tab_start_y = dy + 52.0;
-        for (ti, (ic, lbl)) in tabs.into_iter().enumerate() {
-            let ty = tab_start_y + ti as f32 * 34.0;
+        let (wcx, wcy, wr) = hub_wheel(dx, dy, side_w, dh);
+        let wheel_span = std::f32::consts::TAU / 6.0;
+        let wheel_top = -std::f32::consts::FRAC_PI_2;
+        ui.rounded(
+            wcx - wr - 12.0,
+            wcy - wr - 12.0,
+            (wr + 12.0) * 2.0,
+            (wr + 12.0) * 2.0,
+            wr + 12.0,
+            rgba(0, 0, 0, 60),
+        );
+        for (ti, (ic, _lbl)) in tabs.iter().enumerate() {
             let active = self.hub_tab == ti as u8;
-            let tr = [dx + 10.0, ty, side_w - 18.0, 30.0];
-            if active {
-                ui.rounded(tr[0], tr[1], tr[2], tr[3], 9.0, accent);
-                ui.rounded(tr[0] - 4.0, tr[1] + 6.0, 3.0, 18.0, 1.5, accent_hi);
+            let centre = wheel_top + wheel_span * ti as f32;
+            // The arc is drawn as overlapping dots: a dot is rotation-invariant, so the ring
+            // stays round at every radius without needing a stroked-arc primitive.
+            let dots = 11;
+            for k in 0..dots {
+                let t = k as f32 / (dots - 1) as f32;
+                let angle = centre + (t - 0.5) * (wheel_span - 0.16);
+                let dot = if active { 9.0 } else { 5.0 };
+                let x = wcx + angle.cos() * wr;
+                let y = wcy + angle.sin() * wr;
+                ui.rounded(
+                    x - dot * 0.5,
+                    y - dot * 0.5,
+                    dot,
+                    dot,
+                    dot * 0.5,
+                    if active {
+                        accent
+                    } else {
+                        color::with_alpha(muted_c, 0.62)
+                    },
+                );
             }
-            let fg = if active { accent_fg } else { muted_c };
-            ui.icon(ic, tr[0] + 9.0, tr[1] + 7.0, 15.0, fg);
-            ui.text(
-                if active { Face::SemiBold } else { Face::Medium },
-                10.6,
-                tr[0] + 29.0,
-                tr[1] + 6.0,
-                fg,
-                lbl,
+            let ix = wcx + centre.cos() * wr;
+            let iy = wcy + centre.sin() * wr;
+            ui.icon(
+                *ic,
+                ix - 8.0,
+                iy - 8.0,
+                16.0,
+                if active { accent_fg } else { muted_c },
             );
         }
+        // The centre names the selected category, so the ring itself stays icon-only.
+        ui.rounded(wcx - 34.0, wcy - 34.0, 68.0, 68.0, 34.0, card_sel);
+        ui.border(wcx - 34.0, wcy - 34.0, 68.0, 68.0, 34.0, accent);
+        let selected = tabs[(self.hub_tab as usize).min(tabs.len() - 1)];
+        ui.icon(selected.0, wcx - 9.0, wcy - 19.0, 18.0, accent_hi);
+        ui.centered_fit(
+            Face::SemiBold,
+            8.4,
+            [wcx - 33.0, wcy + 3.0, 66.0, 12.0],
+            text_c,
+            selected.1,
+        );
 
         // Scrollable Right Content Panel with scissor clip and tab transition slide
         let tab_slide = (1.0 - tab_ease) * 14.0;

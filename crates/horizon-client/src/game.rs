@@ -15184,11 +15184,16 @@ impl Game<'_> {
                 self.pad
                     .touch_ui
                     .draw(&mut hud, &self.gui.atlas, self.pad_in_menu());
-                self.pad.touch_ui.draw_floating_menu(
-                    &mut hud,
-                    &self.gui.atlas,
-                    &self.pad.touch.settings,
-                );
+                // The overlay button belongs to the menus: it is drawn on the title
+                // screen, the options, the pause menu and the dashboard, and it stays out
+                // of the way during play unless a raw recording has hidden the controls.
+                if self.pad_in_menu() || horizon_client::recorder::hiding_controls() {
+                    self.pad.touch_ui.draw_floating_menu(
+                        &mut hud,
+                        &self.gui.atlas,
+                        &self.pad.touch.settings,
+                    );
+                }
                 if let Some(status) = shader_packs::pending_shader_pack_status() {
                     let mut ui =
                         horizon_client::ui_theme::Ui::mobile(&self.gui.atlas, &mut hud, (0.0, 0.0));

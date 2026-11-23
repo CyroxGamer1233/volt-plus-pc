@@ -699,7 +699,8 @@ impl Game<'_> {
         };
         let mut b = HudBatch::new([size.width, size.height]);
         let p = [t.location.x as f32 / b.scale, t.location.y as f32 / b.scale];
-        if !self.pad.touch_ui.owns_relative(t.id)
+        if (self.pad_in_menu() || horizon_client::recorder::hiding_controls())
+            && !self.pad.touch_ui.owns_relative(t.id)
             && !self.pad.touch_ui.owns_gesture(t.id)
             && let Some(menu_act) = self.pad.touch_ui.floating_menu_touch(
                 &mut b,
