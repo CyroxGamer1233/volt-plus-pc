@@ -310,7 +310,11 @@ final class EngineRecorder {
                     context.getContentResolver()
                             .insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values);
             if (target != null) {
-                targetFile = context.getContentResolver().openFileDescriptor(target, "rw");
+                try {
+                    targetFile = context.getContentResolver().openFileDescriptor(target, "rw");
+                } catch (Throwable error) {
+                    targetFile = null;
+                }
             }
             return;
         }
