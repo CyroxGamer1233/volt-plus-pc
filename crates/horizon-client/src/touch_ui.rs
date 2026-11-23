@@ -4,7 +4,6 @@ use crate::{
     osk::{Keyboard, Output},
     recorder::{self, Phase},
 };
-use horizon_theme::warm;
 use std::{
     cell::Cell,
     collections::BTreeMap,
@@ -2788,21 +2787,22 @@ impl TouchUi {
         let open_ease = crate::ui_theme::motion::spring_expressive_default(open_t);
         let tab_ease = crate::ui_theme::motion::spring_expressive_default(tab_t);
 
-        // The hub wears Volt Plus's own warm browns, the same thin copper accents as the
-        // launcher dashboard, instead of the launcher's selected theme: the overlay has to
-        // read over any world and stay one design with the menus and the recorder.
+        // The hub is near-black glass with one violet accent, the palette of the chosen
+        // control-hub mockup: the overlay has to read over any world, so the surfaces are
+        // translucent rather than painted, and nothing but the accent is allowed to be
+        // bright. Values are ARGB so the alpha of every surface is explicit here.
+        let surface_bg = 0xF20C0B11; // the modal shell: 95% black, a whisper of violet
+        let sidebar_bg = 0x14FFFFFF; // sidebar and rail wells: white at 8%
+        let card_bg = 0x1AFFFFFF; // rows: white at 10%
+        let card_sel = 0x2C7C5CFF; // selected row: the accent at 17%
+        let border_c = 0x33FFFFFF; // hairlines: white at 20%
+        let accent = 0xFF7C5CFF; // #7C5CFF
+        let accent_hi = 0xFFA98BFF; // the accent, lightened for text on dark
+        let accent_fg = 0xFFFFFFFF;
+        let text_c = 0xFFF4F2F8;
+        let muted_c = 0xFFA6A3B4;
+        let danger_c = 0xFFFF6B7A;
         let hex = color::hex;
-        let surface_bg = hex(warm::PAGE, 250);
-        let sidebar_bg = hex(warm::SURFACE_DIM, 246);
-        let card_bg = hex(warm::CARD, 240);
-        let card_sel = hex(warm::SELECTED, 252);
-        let border_c = hex(warm::BORDER, 255);
-        let accent = hex(warm::ACCENT, 255);
-        let accent_hi = hex(warm::ACCENT_HI, 255);
-        let accent_fg = hex(warm::ON_ACCENT, 255);
-        let text_c = hex(warm::TEXT, 255);
-        let muted_c = hex(warm::TEXT_MUTED, 255);
-        let danger_c = hex(warm::DANGER, 255);
 
         // A raw recording hides the HUD, but the floating button stays: it is the way
         // back to the overlay that stops the capture.
@@ -2930,7 +2930,7 @@ impl TouchUi {
 
         // Backdrop scrim & Modal Shell with expressive entrance slide
         let scrim_a = (196.0 * open_ease.clamp(0.35, 1.0)).round() as u8;
-        ui.fill(0.0, 0.0, w, h, hex(warm::DEEP, scrim_a));
+        ui.fill(0.0, 0.0, w, h, rgba(4, 3, 8, scrim_a));
         let (dw, dh, dx, dy_base, side_w, cx, cw, body_top_base, body_h) = hub_metrics(w, h);
         let slide_y = (1.0 - open_ease) * 18.0;
         let dy = dy_base + slide_y;
