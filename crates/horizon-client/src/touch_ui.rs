@@ -28,6 +28,10 @@ pub struct TouchUi {
     pub hub_tab: u8,
     pub hub_scroll: f32,
     pub hub_max_scroll: Cell<f32>,
+    /// The wheel's current rotation in radians: the selected segment is drawn at the top,
+    /// and hit-testing subtracts this same angle, so the ring and the taps agree even
+    /// mid-animation.
+    pub wheel_angle: Cell<f32>,
     pub hub_scroll_drag: Option<(u64, f32, f32, bool)>,
     pub presets_modal_open: bool,
     pub preset_dialog: Option<PresetDialogState>,
@@ -83,6 +87,7 @@ impl Default for TouchUi {
             hub_tab: 0,
             hub_scroll: 0.0,
             hub_max_scroll: Cell::new(0.0),
+            wheel_angle: Cell::new(0.0),
             hub_scroll_drag: None,
             presets_modal_open: false,
             preset_dialog: None,
@@ -2373,7 +2378,10 @@ impl TouchUi {
                 if angle < 0.0 {
                     angle += std::f32::consts::TAU;
                 }
-                let ti = ((((angle + step * 0.5) / step).floor() as i64).rem_euclid(6)) as u8;
+                // The ring rotates to bring the selection to the top, so undo that
+                // rotation before reading which segment the finger is on.
+                let local = angle - self.wheel_angle.get();
+                let ti = ((((local + step * 0.5) / step).floor() as i64).rem_euclid(6)) as u8;
                 if self.hub_tab != ti {
                     self.hub_tab = ti;
                     self.hub_scroll = 0.0;
@@ -2948,17 +2956,7 @@ impl TouchUi {
         // Top Header Bar with Active Control System Mode Badge
         ui.rounded(dx + 14.0, dy + 9.0, 30.0, 30.0, 9.0, card_sel);
         ui.border(dx + 14.0, dy + 9.0, 30.0, 30.0, 9.0, accent);
-        ui.icon(
-            if settings.control_style == ControlStyle::Mcpe {
-                Icon::HorizonLogo
-            } else {
-                Icon::Settings
-            },
-            dx + 20.0,
-            dy + 15.0,
-            18.0,
-            accent_hi,
-        );
+        ui.icon(Icon::HorizonLogo, dx + 20.0, dy + 15.0, 18.0, accent_hi);
         ui.text(
             Face::SemiBold,
             13.5,
@@ -3010,6 +3008,22 @@ impl TouchUi {
         let (wcx, wcy, wr) = hub_wheel(dx, dy, side_w, dh);
         let wheel_span = std::f32::consts::TAU / 6.0;
         let wheel_top = -std::f32::consts::FRAC_PI_2;
+        // Bring the chosen category to the top: the ring turns, the content pane does not
+        // move under it. Ease-out only, and a straight cut when motion is reduced.
+        let wheel_target = -(self.hub_tab as f32) * wheel_span;
+        let mut wheel_rot = self.wheel_angle.get();
+        if crate::ui_theme::motion::game_animations_disabled()
+            || crate::ui_theme::motion::reduced_motion()
+        {
+            wheel_rot = wheel_target;
+        } else {
+            let delta = wheel_target - wheel_rot;
+            wheel_rot += delta * 0.34;
+            if delta.abs() < 0.002 {
+                wheel_rot = wheel_target;
+            }
+        }
+        self.wheel_angle.set(wheel_rot);
         ui.rounded(
             wcx - wr - 12.0,
             wcy - wr - 12.0,
@@ -3020,7 +3034,7 @@ impl TouchUi {
         );
         for (ti, (ic, _lbl)) in tabs.iter().enumerate() {
             let active = self.hub_tab == ti as u8;
-            let centre = wheel_top + wheel_span * ti as f32;
+            let centre = wheel_top + wheel_span * ti as f32 + wheel_rot;
             // The arc is drawn as overlapping dots: a dot is rotation-invariant, so the ring
             // stays round at every radius without needing a stroked-arc primitive.
             let dots = 11;
