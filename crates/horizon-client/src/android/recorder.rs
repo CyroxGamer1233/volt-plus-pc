@@ -298,7 +298,7 @@ fn start_engine(width: u32, height: u32, frames: i32) {
         let class = recorder_class(env, activity)?;
         let value = env
             .call_static_method(
-                class.clone(),
+                class,
                 "startEngine",
                 "(Landroid/app/Activity;III)Ljava/lang/String;",
                 &[
@@ -310,6 +310,8 @@ fn start_engine(width: u32, height: u32, frames: i32) {
             )?
             .l()?;
         let note = text(env, value)?;
+        // `JClass` is a local reference and not `Clone`: look the class up again.
+        let class = recorder_class(env, activity)?;
         let surface = env
             .call_static_method(class, "engineSurface", "()Landroid/view/Surface;", &[])?
             .l()?;
