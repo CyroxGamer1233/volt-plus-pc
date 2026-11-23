@@ -47,6 +47,7 @@ impl RecordTarget {
             desired_maximum_frame_latency: 2,
             alpha_mode,
             view_formats: vec![],
+            color_space: wgpu::SurfaceColorSpace::default(),
         };
         surface.configure(device, &config);
         Some(Self {
