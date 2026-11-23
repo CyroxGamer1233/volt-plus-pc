@@ -4148,7 +4148,7 @@ impl TouchUi {
                     cx + cw - 120.0,
                     body_y + 339.0,
                     muted_c,
-                    "Movies/VoltPlus",
+                    "Recordings",
                 );
                 let listed = &status.recordings;
                 if listed.is_empty() {
@@ -4158,7 +4158,7 @@ impl TouchUi {
                         cx,
                         body_y + 358.0,
                         muted_c,
-                        "Finished recordings appear here, saved as MP4 in Movies/VoltPlus.",
+                        "Finished recordings appear here, saved as MP4 in the Recordings folder.",
                     );
                 }
                 for (i, cell) in cells.recordings.into_iter().enumerate() {

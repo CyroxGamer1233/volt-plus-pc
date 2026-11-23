@@ -9,7 +9,6 @@ import android.media.MediaFormat;
 import android.media.MediaMuxer;
 import android.net.Uri;
 import android.os.Build;
-import android.os.Environment;
 import android.os.ParcelFileDescriptor;
 import android.provider.MediaStore;
 import android.view.Surface;
@@ -18,7 +17,7 @@ import java.nio.ByteBuffer;
 
 /**
  * Records the game's own frames: a {@link MediaCodec} H.264 encoder with an input {@link
- * Surface}, and a {@link MediaMuxer} writing the same {@code Movies/VoltPlus} MP4 a screen
+ * Surface}, and a {@link MediaMuxer} writing the same {@code Recordings} MP4 a screen
  * recording makes.
  *
  * <p>This is what makes a raw recording possible: the renderer copies every frame into the
@@ -374,15 +373,7 @@ final class EngineRecorder {
     }
 
     private static File legacyFolder(Context context) {
-        File movies = context.getExternalFilesDir(Environment.DIRECTORY_MOVIES);
-        if (movies == null) {
-            movies = context.getFilesDir();
-        }
-        File folder = new File(movies, "VoltPlus");
-        if (!folder.exists()) {
-            folder.mkdirs();
-        }
-        return folder;
+        return RecorderService.legacyFolder(context);
     }
 
     /** Marks the entry finished so galleries can see it, and drops a file that never started. */

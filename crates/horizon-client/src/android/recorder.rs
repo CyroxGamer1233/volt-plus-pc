@@ -291,7 +291,7 @@ pub fn start() {
 
 /// Starts a recording of the game's own frames: `EngineRecorder.java` opens a MediaCodec
 /// encoder, the game renders into its surface (HUD-free, see `render_target`), and the
-/// codec's output goes to the same `Movies/VoltPlus` folder as a screen recording.
+/// codec's output goes to the same `Recordings` folder as a screen recording.
 fn start_engine(width: u32, height: u32, frames: i32) {
     release_capture();
     let result = crate::platform::with_context(|env, activity| {
