@@ -57,6 +57,12 @@ final class DiscordPresence {
     private static boolean wanted;
     /** The card to show: the last one the game built, resent on every READY. */
     private static String card;
+    /**
+     * Whether the installed Discord accepts the card's extra fields. A client that answers an
+     * error to buttons or a party keeps the rest of the card: the picture, the links and the
+     * two lines are what the card is for.
+     */
+    private static boolean extended = true;
 
     private DiscordPresence() {}
 
@@ -152,7 +158,19 @@ final class DiscordPresence {
         if (card == null || !ready) {
             return;
         }
-        flush(cardFrame(card));
+        flush(cardFrame(extended ? card : withoutExtras(card)));
+    }
+
+    /** The card without the fields an older Discord client refuses. */
+    private static String withoutExtras(String activity) {
+        try {
+            JSONObject card = new JSONObject(activity);
+            card.remove("buttons");
+            card.remove("party");
+            return card.toString();
+        } catch (Throwable error) {
+            return null;
+        }
     }
 
     /** One frame over the binder; a Discord that went away is re-bound, never retried blindly. */
@@ -279,6 +297,13 @@ final class DiscordPresence {
                     } else if (frame.contains("\"ERROR\"")) {
                         // A card Discord did not like; the log keeps the reason for the report.
                         Log.i(TAG, "Discord presence answered an error: " + frame);
+                        MAIN.post(
+                                () -> {
+                                    if (extended && card != null) {
+                                        extended = false;
+                                        send();
+                                    }
+                                });
                     }
                 }
 
